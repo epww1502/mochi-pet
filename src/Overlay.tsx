@@ -4,11 +4,13 @@ import { PhysicalPosition, PhysicalSize, availableMonitors, currentMonitor, getC
 import { arrivals, notify, shouldNotifyChat, type Presence } from "./notify";
 import { allHere, holidayOn, isBirthday, isFriday, offTimeHit, onceToday } from "./events";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useRef, useState } from "react";
 import { HATS, HAT_IDS, TAGS, type HatId, type OrnamentId, type SeasonId } from "./decor";
 import { FOODS, LUNCH, RPS, VOTE_GRACE_MS, VOTE_MS, rpsWinner, seededRand, sanitizeGame, spin, tally, type Food, type GameMsg, type Rps } from "./games";
+import { pickPlay, weekdayMood, type WeekdayMood } from "./fun";
 import { wiggleDetector } from "./gestures";
 import { Bubble, PetCanvas } from "./Pet";
 import { newWalker, perchFrom, stepRoam, type Perch, type Walker } from "./roam";
@@ -34,6 +36,12 @@ import {
   saveSettings,
   supabase,
   useSettings,
+  withRoom,
+  ago,
+  ACTION_KEY,
+  readPetAction,
+  cleanNotes,
+  type Note,
   type Emote,
   type Member,
   type PeerState,
@@ -126,6 +134,8 @@ export function Overlay() {
   const [draft, setDraft] = useState<string | null>(null); // null = 입력창 닫힘
   const [error, setError] = useState<string | null>(null);
   const [update, setUpdate] = useState<Update | null>(null); // 새 버전이 있으면
+  const [appVersion, setAppVersion] = useState<string | null>(null); // 지금 버전 (메뉴에 보여 준다)
+  const [notes, setNotes] = useState<Note[]>([]); // 꺼져 있을 때 친구가 남긴 쪽지
   const [updating, setUpdating] = useState<string | null>(null); // 받는 중 진행 글자
   const [channel, setChannel] = useState<RealtimeChannel | null>(null); // 구독 완료된 방 채널
   const [dragging, setDragging] = useState(false); // 내 펫을 집어서 끄는 중
@@ -176,6 +186,9 @@ export function Overlay() {
       .catch(() => manual && setError("업데이트를 확인하지 못했어요. 인터넷 연결을 봐 주세요"));
   }
   useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
     lookForUpdate();
     const id = setInterval(() => lookForUpdate(), UPDATE_CHECK_MS);
     return () => clearInterval(id);
@@ -375,6 +388,7 @@ export function Overlay() {
   useEffect(() => {
     setPeers([]);
     setMembers([]);
+    setNotes([]);
     // 이전 방의 놀이·선물·채팅도 같이 비운다 (안 비우면 이전 방 투표 때문에 새 투표를 못 연다)
     setChats({});
     setGifts({});
@@ -473,6 +487,26 @@ export function Overlay() {
   const loadRef = useRef(loadMembers);
   loadRef.current = loadMembers;
 
+  // 1분마다: 친구가 방 이름을 바꿨으면 따라 바꾸고, 꺼져 있을 때 받은 쪽지를 가져온다 (서버에 아직 없으면 조용히 넘어간다)
+  async function roomSync() {
+    const room = s.room;
+    if (!room) return;
+    const info = await supabase.rpc("room_info", { p_room: room.id });
+    const name = Array.isArray(info.data) ? (info.data[0] as { name?: unknown } | undefined)?.name : undefined;
+    if (typeof name === "string" && name && name !== room.name) {
+      const next = { ...room, name };
+      saveSettings({ room: next, rooms: withRoom(s.rooms, next) });
+    }
+    const got = await supabase.rpc("take_notes", { p_room: room.id, p_device: s.deviceId });
+    const fresh = cleanNotes(got.data).filter((n) => !hiddenRef.current[n.from]);
+    if (fresh.length) {
+      setNotes((p) => [...p, ...fresh]);
+      if (s.notifyChat) notify(`✉️ ${fresh[0].fromName}님의 쪽지`, fresh[0].body);
+    }
+  }
+  const roomSyncRef = useRef(roomSync);
+  roomSyncRef.current = roomSync;
+
   // 켜져 있는 동안: 1분마다 "나 여기 있어" 남기고, 멤버 목록과 시계를 새로 고친다
   const look = JSON.stringify([me.name, me.character, me.color, me.image]);
   useEffect(() => {
@@ -487,6 +521,7 @@ export function Overlay() {
         p_image: me.image,
       });
       await loadRef.current();
+      await roomSyncRef.current();
       channelRef.current?.track(meRef.current); // 혹시 빠졌어도 1분마다 다시 알린다
       setNow(Date.now());
     };
@@ -600,6 +635,57 @@ export function Overlay() {
     }, 100);
     return () => clearInterval(id);
   }, [dragging]);
+  // 펫끼리 놀기: 가끔 가까이 쉬고 있는 두 펫이 하이파이브하거나 안아 준다 (내 화면에서만)
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!eventRef.current.eventsOn || Math.random() > 0.35) return;
+      const st = walkState.current;
+      const pets = [{ ...st.me, online: true }, ...st.roster]
+        .filter((p) => p.online)
+        .map((p) => {
+          const w = walkers.current.get(p.id);
+          const free = !!w && !w.moving && p.status === "idle" && !st.moods[p.id] && !st.bigs[p.id] && !st.gifts[p.id] && st.picker !== p.id && !(p.id === st.me.id && st.busyMe);
+          return { id: p.id, x: w?.x ?? 0, y: w?.y ?? 0, width: SLOT_W * (p.px / PX_DEFAULT), free };
+        });
+      const play = pickPlay(pets);
+      if (!play) return;
+      const at = Date.now();
+      const [emoji, text, kind]: [string, string, Motion] = play.kind === "highfive" ? ["🙌", "하이파이브!", "cheer"] : ["💕", "꼭!", "happy"];
+      // 서로 마주 보게
+      const [a, b] = [walkers.current.get(play.a), walkers.current.get(play.b)];
+      if (a) walkers.current.set(play.a, { ...a, faceLeft: false });
+      if (b) walkers.current.set(play.b, { ...b, faceLeft: true });
+      setMoods((p) => ({ ...p, [play.a]: { kind, at }, [play.b]: { kind, at } }));
+      setEmotes((p) => ({ ...p, [play.a]: { emoji, from: text, at } }));
+    }, 12_000);
+    return () => clearInterval(id);
+  }, []);
+
+  /** 요일·시간 기분: 화면에 있는 펫 모두 같은 기분 */
+  const feelAll = (m: WeekdayMood) => {
+    const at = Date.now();
+    const ids = [selfId, ...walkState.current.roster.filter((p) => p.online).map((p) => p.id)];
+    setMoods((p) => ({ ...p, ...Object.fromEntries(ids.map((id) => [id, { kind: m.motion, at }])) }));
+    setEmotes((p) => ({ ...p, ...Object.fromEntries(ids.map((id) => [id, { emoji: m.emoji, from: m.text, at }])) }));
+  };
+  const feelRef = useRef(feelAll);
+  feelRef.current = feelAll;
+
+  // 설정 창 친구 목록에서 누른 콕 찌르기·간식 주기
+  const actionRef = useRef((_a: ReturnType<typeof readPetAction>) => {});
+  actionRef.current = (a) => {
+    if (!a || hiddenRef.current[a.target]) return;
+    if (a.kind === "poke") react(a.target, "poke");
+    if (a.kind === "feed") sendGame({ t: "feed", by: selfId, from: me.name, target: a.target, food: FOODS[Math.floor(Math.random() * FOODS.length)] });
+  };
+  useEffect(() => {
+    const on = (e: StorageEvent) => {
+      if (e.key === ACTION_KEY) actionRef.current(readPetAction(e.newValue));
+    };
+    window.addEventListener("storage", on);
+    return () => window.removeEventListener("storage", on);
+  }, []);
+
   // ── 이벤트 ──────────────────────────────────────────────
   /** 화면에 있는 펫(나 + 접속 중인 친구) 모두 만세하고, 머리 위에 글자 */
   const celebrate = (emoji: string, text: string) => {
@@ -635,6 +721,8 @@ export function Overlay() {
           setEventToast({ text: `${h.icon} ${h.name} · ${h.greet}`, at: Date.now() });
         }
       }
+      const wm = e.eventsOn ? weekdayMood(d) : null;
+      if (wm && onceToday(`mood-${wm.key}`, d)) feelRef.current(wm);
       prev = d;
     };
     const first = setTimeout(tick, 4000); // 켜자마자는 펫들이 자리 잡은 뒤에
@@ -879,7 +967,7 @@ export function Overlay() {
           ...s.rooms
             .filter((r) => r.id !== s.room?.id)
             .map((r) => ({ id: `room-${r.id}`, text: `🏠 ${r.name}(으)로 방 바꾸기`, action: () => saveSettings({ room: r }) })),
-          { id: "update", text: "업데이트 확인", action: () => lookForUpdate(true) },
+          { id: "update", text: appVersion ? `업데이트 확인 (지금 v${appVersion})` : "업데이트 확인", action: () => lookForUpdate(true) },
           { id: "quit", text: "펫 종료", action: () => invoke("quit_app") },
         ],
       });
@@ -1114,12 +1202,20 @@ export function Overlay() {
 
   return (
     <div className="stage" style={{ "--s": scale } as React.CSSProperties}>
+      <div className="toasts">
       {error && (
         <div className="toast" data-hit onClick={() => setError(null)}>
           {error}
         </div>
       )}
-      {update && !error && (
+      {notes[0] && (
+        <div className="toast note" data-hit role="status" onClick={() => setNotes((p) => p.slice(1))} title="눌러서 닫기">
+          <b>✉️ {notes[0].fromName}</b> <span className="muted">{ago(Date.now() - notes[0].at)}</span>
+          <div>{notes[0].body}</div>
+          {notes.length > 1 && <div className="muted">눌러서 다음 쪽지 ({notes.length - 1}개 더)</div>}
+        </div>
+      )}
+      {update && (
         <div className="toast update" data-hit>
           <span>새 버전 v{update.version}</span>
           <button onClick={installUpdate} disabled={!!updating}>
@@ -1132,6 +1228,12 @@ export function Overlay() {
           )}
         </div>
       )}
+      {eventToast && (
+        <div className="toast event" data-hit onClick={() => setEventToast(null)} role="status">
+          {eventToast.text}
+        </div>
+      )}
+      </div>
       <div className="row">
         <PetSlot
           peer={{ ...me, online: true, lastSeen: null }}
@@ -1390,11 +1492,6 @@ export function Overlay() {
         </div>
       )}
       {Date.now() - confettiAt < CONFETTI_MS && <Confetti key={confettiAt} />}
-      {eventToast && !error && !update && (
-        <div className="toast event" data-hit onClick={() => setEventToast(null)} role="status">
-          {eventToast.text}
-        </div>
-      )}
       <SeasonFx seasons={s.seasons as SeasonId[]} />
       <WeatherFx weather={weather} scale={scale} />
       {shots.map((shot) => (

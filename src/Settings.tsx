@@ -9,7 +9,7 @@ import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
 import { HOLIDAYS } from "./events";
 import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
-import { MSG_MAX, PX_DEFAULT, ago, buildRoster, type Member, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
+import { MSG_MAX, NOTE_MAX, sendPetAction, PX_DEFAULT, ago, buildRoster, type Member, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -22,6 +22,7 @@ export function Settings() {
   const [msg, setMsg] = useState<string | null>(null);
   const [history, setHistory] = useState<Message[]>([]);
   const [copied, setCopied] = useState(false);
+  const [rename, setRename] = useState<string | null>(null); // 방 이름 바꾸는 중이면 새 이름
   const [placeQ, setPlaceQ] = useState("");
   const [found, setFound] = useState<(Place & { detail: string })[] | null>(null);
   const weather = useWeather(s.weatherOn, s.place);
@@ -356,9 +357,37 @@ export function Settings() {
             <h2>방</h2>
             {s.room ? (
               <>
-                <p className="room-line">
-                  <b>{s.room.name}</b> <span className="muted">· 초대 코드를 친구에게 알려 주세요</span>
-                </p>
+                {rename === null ? (
+                  <p className="room-line">
+                    <b>{s.room.name}</b>{" "}
+                    <button className="link" onClick={() => setRename(s.room!.name)} aria-label="방 이름 바꾸기">
+                      ✏️ 이름 바꾸기
+                    </button>{" "}
+                    <span className="muted">· 초대 코드를 친구에게 알려 주세요</span>
+                  </p>
+                ) : (
+                  <form
+                    className="inline"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const room = s.room!;
+                      const { data, error } = await supabase.rpc("rename_room", { p_room: room.id, p_name: rename });
+                      if (error || typeof data !== "string") return setMsg("방 이름을 바꾸지 못했어요");
+                      const next = { ...room, name: data };
+                      saveSettings({ room: next, rooms: withRoom(s.rooms, next) });
+                      setRename(null);
+                      setMsg(null);
+                    }}
+                  >
+                    <input aria-label="새 방 이름" value={rename} maxLength={30} autoFocus placeholder="방 이름" onChange={(e) => setRename(e.target.value)} />
+                    <button type="submit" disabled={!rename.trim() || rename.trim() === s.room.name}>
+                      바꾸기
+                    </button>
+                    <button type="button" className="ghost" onClick={() => setRename(null)}>
+                      취소
+                    </button>
+                  </form>
+                )}
                 <div className="inline">
                   <code className="code">{s.room.code}</code>
                   <button
@@ -757,10 +786,13 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
 }
 
 /** 켤 때만 알림 권한을 묻는다. 거절하면 켜지 않고 안내한다. */
-/** 지금 방의 친구들: 접속 중인지, 마지막 접속, 화면에서 숨기기/다시 보기 */
+/** 지금 방의 친구들: 접속 중인지, 마지막 접속. 누르면 콕 찌르기·간식·쪽지·크기·숨기기 */
 function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [open, setOpen] = useState<string | null>(null); // 펼친 친구
+  const [note, setNote] = useState("");
+  const [sent, setSent] = useState<{ id: string; text: string } | null>(null); // 방금 한 일 알림
   useEffect(() => {
     let alive = true;
     const load = () =>
@@ -777,6 +809,18 @@ function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
       clearInterval(id);
     };
   }, [roomId]);
+  const flash = (id: string, text: string) => {
+    setSent({ id, text });
+    setTimeout(() => setSent((v) => (v?.text === text ? null : v)), 2500);
+  };
+  async function sendNote(id: string, name: string) {
+    const body = note.trim().slice(0, NOTE_MAX);
+    if (!body) return;
+    const { error } = await supabase.rpc("leave_note", { p_room: roomId, p_to: id, p_from: s.deviceId, p_from_name: s.name || "친구", p_body: body });
+    if (error) return flash(id, "쪽지를 보내지 못했어요");
+    setNote("");
+    flash(id, `${name}에게 쪽지를 남겼어요`);
+  }
   // 친구 펫 화면과 같은 규칙으로 (최근 1분 안에 들어왔으면 접속 중, 같은 사람의 다른 컴퓨터는 한 번만)
   const friends = members ? buildRoster([], members, s.deviceId, 100, now) : [];
   const on = friends.filter((f) => f.online).length;
@@ -793,27 +837,92 @@ function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
         <ul className="friend-list">
           {friends.map((f) => {
             const hidden = f.id in s.hidden;
+            const isOpen = open === f.id;
+            const px = s.friendPx[f.id] ?? f.px;
             return (
-              <li key={f.id} className={hidden ? "hidden" : ""}>
-                <span className="friend-pet">
-                  <PetCanvas character={f.character} color={f.color} image={f.image} mood="idle" px={2} still />
-                </span>
-                <span className={`light ${f.online ? "green" : "gray"}`} />
-                <span className="friend-name">
-                  <b>{f.name}</b>
-                  <span className="muted">{f.online ? "접속 중" : f.lastSeen ? ago(now - f.lastSeen) : "오프라인"}</span>
-                </span>
+              <li key={f.id} className={`${hidden ? "hidden" : ""} ${isOpen ? "open" : ""}`}>
                 <button
-                  className="ghost"
+                  className="friend-row"
+                  aria-expanded={isOpen}
                   onClick={() => {
-                    if (hidden) {
-                      const { [f.id]: _shown, ...rest } = s.hidden;
-                      saveSettings({ hidden: rest });
-                    } else saveSettings({ hidden: { ...s.hidden, [f.id]: f.name } });
+                    setOpen(isOpen ? null : f.id);
+                    setNote("");
                   }}
                 >
-                  {hidden ? "다시 보기" : "숨기기"}
+                  <span className="friend-pet">
+                    <PetCanvas character={f.character} color={f.color} image={f.image} mood="idle" px={2} still />
+                  </span>
+                  <span className={`light ${f.online ? "green" : "gray"}`} />
+                  <span className="friend-name">
+                    <b>{f.name}</b>
+                    <span className="muted">{hidden ? "숨김 · " : ""}{f.online ? "접속 중" : f.lastSeen ? ago(now - f.lastSeen) : "오프라인"}</span>
+                  </span>
+                  <span className="chev" aria-hidden>{isOpen ? "▴" : "▾"}</span>
                 </button>
+                {isOpen && (
+                  <div className="friend-more">
+                    {f.online && !hidden ? (
+                      <div className="inline">
+                        <button onClick={() => (sendPetAction({ kind: "poke", target: f.id }), flash(f.id, `${f.name}을(를) 콕 찔렀어요`))}>👉 콕 찌르기</button>
+                        <button onClick={() => (sendPetAction({ kind: "feed", target: f.id }), flash(f.id, `${f.name}에게 간식을 줬어요`))}>🍪 간식 주기</button>
+                      </div>
+                    ) : (
+                      <p className="hint">{hidden ? "숨긴 친구예요" : "지금 꺼져 있어요. 쪽지를 남기면 켤 때 보여요"}</p>
+                    )}
+                    <div className="inline">
+                      <input
+                        aria-label={`${f.name}에게 쪽지`}
+                        value={note}
+                        maxLength={NOTE_MAX}
+                        placeholder="✉️ 쪽지 남기기"
+                        onChange={(e) => setNote(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && sendNote(f.id, f.name)}
+                      />
+                      <button disabled={!note.trim()} onClick={() => sendNote(f.id, f.name)}>
+                        보내기
+                      </button>
+                    </div>
+                    <label className="friend-size">
+                      <span>
+                        크기 <output>{percentOf(px)}%</output> <span className="muted">· 내 화면에서만</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={PX_MIN}
+                        max={PX_MAX}
+                        step={1}
+                        value={px}
+                        aria-label={`${f.name} 펫 크기`}
+                        onChange={(e) => saveSettings({ friendPx: { ...s.friendPx, [f.id]: Number(e.target.value) } })}
+                      />
+                    </label>
+                    <div className="inline">
+                      <button
+                        className="ghost"
+                        onClick={() => {
+                          if (hidden) {
+                            const { [f.id]: _shown, ...rest } = s.hidden;
+                            saveSettings({ hidden: rest });
+                          } else saveSettings({ hidden: { ...s.hidden, [f.id]: f.name } });
+                        }}
+                      >
+                        {hidden ? "다시 보기" : "숨기기"}
+                      </button>
+                      {s.friendPx[f.id] !== undefined && (
+                        <button
+                          className="ghost"
+                          onClick={() => {
+                            const { [f.id]: _reset, ...rest } = s.friendPx;
+                            saveSettings({ friendPx: rest });
+                          }}
+                        >
+                          크기 원래대로
+                        </button>
+                      )}
+                    </div>
+                    {sent?.id === f.id && <p className="hint" role="status">{sent.text}</p>}
+                  </div>
+                )}
               </li>
             );
           })}

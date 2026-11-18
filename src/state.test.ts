@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, HAT_DX_MAX, cleanHatScale, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, cleanNotes, readPetAction, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -295,5 +295,28 @@ describe("방 목록", () => {
     const next = withRoom(many, a);
     expect(next).toHaveLength(ROOMS_MAX);
     expect(next[next.length - 1]).toEqual(a);
+  });
+});
+
+describe("설정 창 → 펫 창 일", () => {
+  it("콕 찌르기·간식만 받고 이상한 값은 버린다", () => {
+    expect(readPetAction(JSON.stringify({ kind: "poke", target: "a", at: 1 }))).toEqual({ kind: "poke", target: "a" });
+    expect(readPetAction(JSON.stringify({ kind: "nuke", target: "a" }))).toBeNull();
+    expect(readPetAction("{")).toBeNull();
+    expect(readPetAction(null)).toBeNull();
+  });
+});
+
+describe("cleanNotes", () => {
+  it("빈 쪽지는 버리고 오래된 것부터, 길면 자른다", () => {
+    const notes = cleanNotes([
+      { from_device: "b", from_name: "다온", body: "  늦게 와?  ", created_at: "2026-11-18T10:00:00Z" },
+      { from_device: "a", from_name: "나래", body: "x".repeat(300), created_at: "2026-11-18T09:00:00Z" },
+      { from_device: "c", from_name: "영주", body: "   ", created_at: "2026-11-18T11:00:00Z" },
+    ]);
+    expect(notes.map((n) => n.fromName)).toEqual(["나래", "다온"]);
+    expect(notes[0].body.length).toBe(200);
+    expect(notes[1].body).toBe("늦게 와?");
+    expect(cleanNotes(null)).toEqual([]);
   });
 });

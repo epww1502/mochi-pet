@@ -469,3 +469,35 @@ export function sanitizeReaction(raw: unknown): Reaction | null {
   if ((r.kind === "gift" || r.kind === "open") && isHat(r.hat)) return { ...base, kind: r.kind, hat: r.hat };
   return null;
 }
+
+/** 설정 창 → 펫 창으로 보내는 일 (친구 목록에서 콕 찌르기·간식 주기). 두 창이 같은 localStorage를 본다 */
+export const ACTION_KEY = "mochi-pet-action";
+export type PetAction = { kind: "poke" | "feed"; target: string };
+export function sendPetAction(a: PetAction) {
+  try {
+    // 같은 일을 두 번 해도 값이 바뀌어야 다른 창에 알림(storage 이벤트)이 간다
+    localStorage.setItem(ACTION_KEY, JSON.stringify({ ...a, at: Date.now() }));
+  } catch {
+    // 저장소를 못 쓰면 조용히 넘어간다
+  }
+}
+export function readPetAction(v: string | null): PetAction | null {
+  try {
+    const o = JSON.parse(v ?? "") as Record<string, unknown>;
+    if ((o.kind === "poke" || o.kind === "feed") && typeof o.target === "string" && o.target) return { kind: o.kind, target: o.target };
+  } catch {
+    // 이상한 값은 무시
+  }
+  return null;
+}
+
+/** 꺼진 친구에게 남기는 쪽지 */
+export const NOTE_MAX = 200;
+export type Note = { from: string; fromName: string; body: string; at: number };
+export function cleanNotes(data: unknown): Note[] {
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter((n) => n && typeof n.body === "string" && n.body.trim() && typeof n.from_name === "string")
+    .map((n) => ({ from: String(n.from_device ?? ""), fromName: String(n.from_name).slice(0, 30), body: String(n.body).trim().slice(0, NOTE_MAX), at: Date.parse(n.created_at) || Date.now() }))
+    .sort((a, b) => a.at - b.at);
+}
