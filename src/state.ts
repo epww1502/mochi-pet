@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
-import { CHARACTERS, type CharacterId, type Mood } from "./sprites";
+import { CHARACTERS, type CharacterId, type Mood, type Motion } from "./sprites";
 
 // 공개해도 되는 키(publishable). 테이블은 RLS로 잠겨 있고 함수로만 접근한다.
 export const supabase = createClient(
@@ -16,7 +16,7 @@ export type Settings = {
   name: string;
   character: CharacterId;
   color: string;
-  /** 가져온 그림(32x32 PNG data URL). 있으면 캐릭터 대신 쓴다. */
+  /** 가져온 그림(64x64 이하 PNG data URL). 있으면 캐릭터 대신 쓴다. */
   image: string | null;
   room: Room | null;
   /** 픽셀 한 칸의 화면 크기(px). 펫, 이름표, 말풍선, 창이 이 비율로 같이 커진다. */
@@ -108,29 +108,89 @@ function sanitizePeer(p: PeerState): PeerState {
   };
 }
 
-/** 그림 한 장이 presence에 실리므로 크기를 제한한다. 32x32 PNG는 보통 2~5KB. */
-export const MAX_IMAGE_CHARS = 24_000;
+/** 그림 한 장이 presence에 실리므로 크기를 제한한다. 64x64 PNG는 사진이라도 보통 10~20KB. */
+export const MAX_IMAGE_CHARS = 48_000;
 
 /** 친구가 보낸 그림은 우리가 만든 형식(작은 PNG data URL)일 때만 쓴다. */
 export function safeImage(url: unknown): string | null {
   return typeof url === "string" && url.startsWith("data:image/png;base64,") && url.length <= MAX_IMAGE_CHARS ? url : null;
 }
 
-/** 사진이든 큰 그림이든 32x32 픽셀로 줄인 PNG data URL로 바꾼다. 비율은 유지하고 남는 곳은 투명. */
+/**
+ * 가져온 그림을 PNG data URL로. 64칸 이하 픽셀아트는 원본 그대로(화면에서 정수배로 또렷하게 키운다),
+ * 더 큰 그림은 비율을 유지해 64칸 안으로 부드럽게 줄인다. 너무 무거우면 48, 32칸으로 다시 줄인다.
+ */
 export async function importImage(file: File): Promise<string> {
   const bitmap = await createImageBitmap(file);
-  const size = 32;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-  // 작은 픽셀아트는 또렷하게, 큰 사진은 부드럽게 줄인다
-  ctx.imageSmoothingEnabled = Math.max(bitmap.width, bitmap.height) > size * 2;
-  const scale = size / Math.max(bitmap.width, bitmap.height);
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
-  ctx.drawImage(bitmap, (size - w) / 2, size - h, w, h); // 바닥에 붙여서 서 있는 느낌
-  bitmap.close();
-  const url = canvas.toDataURL("image/png");
-  if (!safeImage(url)) throw new Error("그림이 너무 복잡해요");
-  return url;
+  try {
+    for (const max of [64, 48, 32]) {
+      const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext("2d")!;
+      ctx.imageSmoothingEnabled = scale < 1;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const url = canvas.toDataURL("image/png");
+      if (safeImage(url)) return url;
+    }
+    throw new Error("그림이 너무 복잡해요");
+  } finally {
+    bitmap.close();
+  }
+}
+
+/** 친구 펫을 눌러 보낼 수 있는 이모티콘 */
+export const EMOTES = ["❤️", "🥰", "🤗", "👍", "🙌", "🎉", "😂", "🤣", "😮", "😢", "👋", "☕"] as const;
+export type Emote = (typeof EMOTES)[number];
+
+/** 이모티콘을 보낼 때 보낸 사람 펫이 하는 몸짓 (방 안 모두에게 보인다) */
+export const EMOTE_MOTION: Record<Emote, Motion> = {
+  "❤️": "happy",
+  "🥰": "happy",
+  "🤗": "happy",
+  "☕": "happy",
+  "👍": "cheer",
+  "🙌": "cheer",
+  "🎉": "cheer",
+  "😂": "laugh",
+  "🤣": "laugh",
+  "😮": "surprised",
+  "😢": "sad",
+  "👋": "wave",
+};
+
+/** 이모티콘을 받았을 때 답장으로 추천하는 3개 */
+export const REPLIES: Record<Emote, readonly [Emote, Emote, Emote]> = {
+  "❤️": ["🥰", "❤️", "🤗"],
+  "🥰": ["❤️", "🥰", "🤗"],
+  "🤗": ["🤗", "❤️", "🥰"],
+  "👍": ["🙌", "👍", "🎉"],
+  "🙌": ["🎉", "🙌", "👍"],
+  "🎉": ["🙌", "🎉", "🥰"],
+  "😂": ["🤣", "😂", "👍"],
+  "🤣": ["😂", "🤣", "👍"],
+  "😮": ["😂", "😮", "🤗"],
+  "😢": ["🤗", "❤️", "😢"],
+  "👋": ["👋", "🥰", "☕"],
+  "☕": ["☕", "👍", "👋"],
+};
+
+/**
+ * 방 안에 broadcast로 퍼지는 반응. by(보낸 사람 id)가 from(이름)으로 target 펫에 무엇을 했는지.
+ * 몸짓은 이모티콘에서 각자 정하므로 따로 보내지 않는다.
+ */
+export type Reaction = { target: string; by: string; from: string; kind: "dizzy" | "happy" | "emote"; emoji?: Emote };
+
+const isEmote = (e: unknown): e is Emote => (EMOTES as readonly unknown[]).includes(e);
+
+/** 친구가 보낸 반응은 정해진 종류와 이모티콘일 때만 받는다. */
+export function sanitizeReaction(raw: unknown): Reaction | null {
+  const r = raw as Partial<Reaction> | null;
+  if (!r || typeof r.target !== "string" || typeof r.from !== "string" || typeof r.by !== "string") return null;
+  const base = { target: r.target, by: r.by, from: r.from.slice(0, 20) };
+  if (r.kind === "dizzy" || r.kind === "happy") return { ...base, kind: r.kind };
+  if (r.kind === "emote" && isEmote(r.emoji)) return { ...base, kind: "emote", emoji: r.emoji };
+  return null;
 }

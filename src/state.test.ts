@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CHARACTERS } from "./sprites";
-import { MAX_IMAGE_CHARS, presenceToPeers, pxOf, safeImage, type PeerState } from "./state";
+import { CHARACTERS, fitImage } from "./sprites";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, presenceToPeers, pxOf, safeImage, sanitizeReaction, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -76,5 +76,38 @@ describe("pxOf", () => {
   it("값이 없거나 이상하면 보통(100%)이다", () => {
     expect(pxOf({})).toBe(5);
     expect(pxOf({ px: Number.NaN, size: "constructor" })).toBe(5);
+  });
+});
+
+describe("fitImage", () => {
+  it("작은 픽셀아트는 정수배로만 키워서 칸이 고르다", () => {
+    expect(fitImage(16, 16, 70)).toEqual({ w: 64, h: 64, smooth: false }); // 4배
+    expect(fitImage(20, 10, 70)).toEqual({ w: 60, h: 30, smooth: false }); // 3배, 비율 유지
+  });
+
+  it("칸보다 큰 그림은 비율을 지키며 부드럽게 줄인다", () => {
+    expect(fitImage(64, 32, 56)).toEqual({ w: 56, h: 28, smooth: true });
+  });
+});
+
+describe("sanitizeReaction", () => {
+  const base = { target: "a", by: "b", from: "가람" };
+  it("정해진 이모티콘과 반응만 받는다", () => {
+    expect(sanitizeReaction({ ...base, kind: "emote", emoji: "❤️" })).toEqual({ ...base, kind: "emote", emoji: "❤️" });
+    expect(sanitizeReaction({ ...base, kind: "happy" })?.kind).toBe("happy");
+    expect(sanitizeReaction({ ...base, kind: "emote", emoji: "<img src=x>" })).toBeNull();
+    expect(sanitizeReaction({ ...base, kind: "explode" })).toBeNull();
+    expect(sanitizeReaction({ target: "a", from: "가람", kind: "happy" })).toBeNull(); // 보낸 사람 id 없음
+    expect(sanitizeReaction(null)).toBeNull();
+  });
+});
+
+describe("이모티콘 답장", () => {
+  it("모든 이모티콘에 몸짓과 답장 추천 3개가 있고, 추천도 보낼 수 있는 이모티콘이다", () => {
+    for (const e of EMOTES) {
+      expect(EMOTE_MOTION[e], e).toBeTruthy();
+      expect(REPLIES[e], e).toHaveLength(3);
+      for (const r of REPLIES[e]) expect(EMOTES, `${e} → ${r}`).toContain(r);
+    }
   });
 });

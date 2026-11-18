@@ -90,7 +90,7 @@ export function Settings() {
             />
           </label>
         </div>
-        <p className="muted small-left">그림은 32x32 픽셀로 줄어들어 친구에게도 보여요. 배경이 투명한 PNG 픽셀아트가 제일 잘 어울려요.</p>
+        <p className="muted small-left">큰 그림은 64x64 픽셀로 줄어들고, 친구에게도 보여요. 배경이 투명한 PNG 픽셀아트가 제일 잘 어울려요.</p>
         <label className="size">
           <span>
             크기 <output>{percentOf(s.px)}%</output>
