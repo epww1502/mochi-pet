@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { contentBox } from "./picture";
 import type { HatId } from "./decor";
-import { CANVAS_H, CANVAS_W, CHARACTERS, drawImagePet, drawPet, hatHeadroom, type CharacterId, type HatOffset, type Mood, type Walk } from "./sprites";
+import { CHARACTERS, canvasCells, drawImagePet, drawPet, type CharacterId, type HatOffset, type Mood, type Walk } from "./sprites";
 
 type Props = {
   character: CharacterId;
@@ -16,6 +16,8 @@ type Props = {
   hatOffset?: HatOffset;
   /** 모자 크기 (1 = 원래) */
   hatScale?: number;
+  /** 캔버스를 적어도 이만큼(칸)은 크게: 모자를 고치는 동안 크기가 들쑥날쑥하지 않게 */
+  minCells?: { cols: number; rows: number };
 };
 
 /** 화면 배율(레티나 2, 윈도우 125% 등). 창을 다른 모니터로 옮기면 바뀐다. */
@@ -29,14 +31,16 @@ function useDevicePixelRatio() {
   return dpr;
 }
 
-export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0], hatScale = 1 }: Props) {
+export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0], hatScale = 1, minCells }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const dpr = useDevicePixelRatio();
   // 캔버스를 화면의 실제 픽셀로 그린다. 한 칸 = 정수 개의 실제 픽셀이라 늘려 보일 때 뭉개지지 않는다.
   const cell = Math.max(1, Math.round(px * dpr));
   const [dx, dy] = hatOffset; // 배열은 매번 새로 오니 숫자로 풀어서 그리기 루프 의존성에 쓴다
   // 모자를 높이 올렸거나 크게 했으면 캔버스를 위로 늘린다 (아래는 그대로라 펫 자리는 안 바뀐다)
-  const rows = CANVAS_H + (hat ? hatHeadroom(image ? 0 : CHARACTERS[character].headY, dy, hatScale) : 0);
+  const need = canvasCells(image ? 0 : CHARACTERS[character].headY, !!hat, [dx, dy], hatScale);
+  const rows = Math.max(need.rows, minCells?.rows ?? 0);
+  const cols = Math.max(need.cols, minCells?.cols ?? 0);
   // 걷기 상태는 자주 바뀌므로 그리기 루프를 다시 만들지 않고 ref로 읽는다
   const walkRef = useRef(walk);
   walkRef.current = walk;
@@ -58,13 +62,13 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
     tick();
     const id = setInterval(tick, 80); // 초당 약 12번: 상시 실행이라 가볍게
     return () => clearInterval(id);
-  }, [character, color, image, mood, cell, hat, dx, dy, hatScale, rows]);
+  }, [character, color, image, mood, cell, hat, dx, dy, hatScale, rows, cols]);
   return (
     <canvas
       ref={ref}
-      width={CANVAS_W * cell}
+      width={cols * cell}
       height={rows * cell}
-      style={{ width: (CANVAS_W * cell) / dpr, height: (rows * cell) / dpr }}
+      style={{ width: (cols * cell) / dpr, height: (rows * cell) / dpr }}
       className="pixel"
     />
   );

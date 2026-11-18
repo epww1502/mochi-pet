@@ -197,7 +197,7 @@ export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1, [dx, 
 
 /** 모자를 원래 자리에서 옮긴 칸 수 [오른쪽, 아래]. 설정 미리보기에서 끌어서 정한다. */
 export type HatOffset = readonly [number, number];
-export const HAT_DX_MAX = 5;
+export const HAT_DX_MAX = 8;
 export const HAT_DY_MIN = -8; // 위로 올리면 캔버스가 그만큼 위로 늘어난다 (hatHeadroom)
 export const HAT_DY_MAX = 8;
 
@@ -252,6 +252,17 @@ export function hatDyMin(_character?: CharacterId, _image?: boolean): number {
  * 모자가 캔버스 위로 넘치지 않게 위에 더 붙일 칸 수.
  * 펫 위 여유는 4칸(CANVAS_H - 14)이고, 숨쉬며 1칸 뜨는 것까지 남긴다.
  */
+export function hatSidePad(dx: number, scale = 1): number {
+  // 펫 양옆 여유는 2칸. 모자(가로 16칸 기준)를 옆으로 옮기거나 키우면 넘치는 만큼 양쪽을 똑같이 늘린다
+  return Math.max(0, Math.ceil(Math.abs(dx) + 8 * scale - 10));
+}
+
+/** 펫 캔버스 크기(칸): 모자를 올리거나 옆으로 옮기거나 키운 만큼 늘린다 */
+export function canvasCells(headY: number, hat: boolean, [dx, dy]: HatOffset = [0, 0], scale = 1): { cols: number; rows: number } {
+  if (!hat) return { cols: CANVAS_W, rows: CANVAS_H };
+  return { cols: CANVAS_W + 2 * hatSidePad(dx, scale), rows: CANVAS_H + hatHeadroom(headY, dy, scale) };
+}
+
 export function hatHeadroom(headY: number, dy: number, scale = 1): number {
   const above = Math.ceil(4 * scale - (headY + dy + 1)) + 1; // 펫 맨 윗줄 위로 필요한 칸
   return Math.max(0, above - (CANVAS_H - 14));
@@ -360,7 +371,9 @@ export function drawPet(
   hatScale = 1,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
+  // 캔버스를 옆으로 늘렸으면 그 가운데에 선다
+  const homeX = HOME_X + Math.round((ctx.canvas.width / px - CANVAS_W) / 2);
+  const w = { x: homeX, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
   // 크기를 바꾼 모자는 자리만 표시해 두고(몸과 똑같이 눕히고 뒤집히게) 나중에 그 자리에 크게/작게 그린다
   const scaled = !!hat && hatScale !== 1 && mood !== "slip";
   let g = withHat(petGrid(character, color, mood, t, w.moving), hat, CHARACTERS[character].headY, hatOffset, scaled);
@@ -398,7 +411,9 @@ export function drawImagePet(
   content: { top: number; cx: number } = { top: 0, cx: 0.5 },
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
+  // 캔버스를 옆으로 늘렸으면 그 가운데에 선다
+  const homeX = HOME_X + Math.round((ctx.canvas.width / px - CANVAS_W) / 2);
+  const w = { x: homeX, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
   const H = Math.round(ctx.canvas.height / px);
   const top = H - 14 - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
   const fit = fitImage(img.naturalWidth, img.naturalHeight, 14 * px);

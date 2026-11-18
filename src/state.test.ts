@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHARACTERS, cleanHatScale, fitImage } from "./sprites";
+import { CHARACTERS, HAT_DX_MAX, cleanHatScale, fitImage } from "./sprites";
 import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
@@ -29,7 +29,7 @@ describe("presenceToPeers", () => {
       { a: [old as PeerState], b: [peer("b", "나래", { hatOffset: [2, -1] })], c: [peer("c", "다온", { hatOffset: [99, "x" as unknown as number] })] },
       "me",
     );
-    expect(peers.map((p) => p.hatOffset)).toEqual([[0, 0], [2, -1], [5, 0]]);
+    expect(peers.map((p) => p.hatOffset)).toEqual([[0, 0], [2, -1], [HAT_DX_MAX, 0]]);
   });
 
   it("모자 크기는 정해진 단계만, 옛 버전이거나 이상한 값이면 원래 크기", () => {

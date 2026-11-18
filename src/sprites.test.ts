@@ -33,7 +33,7 @@ describe("펫 모양 바꾸기", () => {
 
 
 import { HATS, HAT_IDS, TAGS, available } from "./decor";
-import { CANVAS_H, CHARACTERS, HAT_DY_MIN, cleanHatOffset, hatDyMin, hatHeadroom, withHat } from "./sprites";
+import { CANVAS_H, CANVAS_W, CHARACTERS, HAT_DY_MIN, canvasCells, cleanHatOffset, hatDyMin, hatHeadroom, withHat } from "./sprites";
 
 describe("모자", () => {
   it("모든 모자는 16칸 x 4줄이고, 머리 높이에 맞춰 얹힌다", () => {
@@ -95,5 +95,14 @@ describe("hatHeadroom", () => {
     expect(hatHeadroom(0, -3)).toBe(3);
     expect(hatHeadroom(4, 0, 1.5)).toBe(0);
     expect(hatHeadroom(1, 0, 1.5)).toBe(1);
+  });
+});
+
+describe("canvasCells", () => {
+  it("모자를 옆으로 옮기거나 키우면 양쪽을 똑같이 늘리고, 모자가 없으면 그대로", () => {
+    expect(canvasCells(1, false, [8, -8], 1.5)).toEqual({ cols: CANVAS_W, rows: CANVAS_H });
+    expect(canvasCells(1, true)).toEqual({ cols: CANVAS_W, rows: CANVAS_H });
+    expect(canvasCells(1, true, [5, 0]).cols).toBe(CANVAS_W + 6);
+    expect(canvasCells(1, true, [-5, 0]).cols).toBe(CANVAS_W + 6);
   });
 });

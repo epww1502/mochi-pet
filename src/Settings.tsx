@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { FIT_DEFAULT, FIT_ZOOM_MAX, FIT_ZOOM_MIN, bakePicture, cleanFit, loadImage, type PictureFit } from "./picture";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
-import { CHARACTERS, COLORS, HAT_SCALE_MAX, HAT_SCALE_MIN, HAT_SCALE_STEP, cleanHatOffset, cleanHatScale, hatDyMin, type CharacterId, type HatOffset, type HatScale } from "./sprites";
+import { CHARACTERS, COLORS, HAT_DX_MAX, HAT_DY_MIN, HAT_SCALE_MAX, canvasCells, HAT_SCALE_MIN, HAT_SCALE_STEP, cleanHatOffset, cleanHatScale, hatDyMin, type CharacterId, type HatOffset, type HatScale } from "./sprites";
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
 import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
@@ -608,6 +608,7 @@ function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editin
   }, [s.hat, setEditing]);
 
   const fit = (v: [number, number]) => cleanHatOffset(v, hatDyMin(s.character, !!s.image));
+  const editCells = canvasCells(s.image ? 0 : CHARACTERS[s.character].headY, true, [HAT_DX_MAX, HAT_DY_MIN], HAT_SCALE_MAX);
   const offset = editing ? draft : s.hatOffset;
   const hatScale = editing ? scaleDraft : s.hatScale;
   const changed = draft[0] !== s.hatOffset[0] || draft[1] !== s.hatOffset[1] || scaleDraft !== s.hatScale;
@@ -652,7 +653,18 @@ function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editin
           setDraft((d) => fit([d[0] + step[0], d[1] + step[1]]));
         }}
       >
-        <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={offset} hatScale={hatScale} />
+        <PetCanvas
+          character={s.character}
+          color={s.color}
+          image={s.image}
+          mood="idle"
+          px={PREVIEW_PX}
+          hat={s.hat}
+          hatOffset={offset}
+          hatScale={hatScale}
+          // 고치는 동안은 가장 멀리 옮겼을 때 크기로 고정: 모자를 옮길 때마다 미리보기가 커졌다 줄었다 하면 모자가 제자리에 있는 것처럼 보인다
+          minCells={editing ? editCells : undefined}
+        />
       </div>
       {editing && (
         <div className="hat-edit-bar" role="group" aria-label="모자 위치·크기 조절">
