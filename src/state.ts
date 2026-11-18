@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
+import { isHat, isSeason, isTag, type HatId, type SeasonId, type TagId } from "./decor";
+import { safePlace, type Place } from "./weather";
 import { CHARACTERS, type CharacterId, type Mood, type Motion } from "./sprites";
 
 // 공개해도 되는 키(publishable). 테이블은 RLS로 잠겨 있고 함수로만 접근한다.
@@ -25,6 +27,15 @@ export type Settings = {
   busy: boolean;
   /** 이름표를 펫 머리 위에 둘지 발 아래에 둘지 (내 화면의 모든 펫에 적용) */
   labelPos: "above" | "below";
+  hat: HatId | null;
+  tag: TagId | null;
+  /** 켠 계절 꾸미기 (기본 없음) */
+  seasons: SeasonId[];
+  /** 조용히 모드: 친구 채팅 말풍선을 띄우지 않고 안 읽은 개수만 쌓는다 */
+  quiet: boolean;
+  /** 실제 날씨 효과 (기본 꺼짐). 켜면 place의 날씨를 30분마다 받아 온다 */
+  weatherOn: boolean;
+  place: Place | null;
 };
 
 /** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
@@ -45,10 +56,21 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above" };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, tag: null, seasons: [], quiet: false, weatherOn: false, place: null };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    return { ...base, ...saved, px: pxOf(saved), labelPos: saved.labelPos === "below" ? "below" : "above" };
+    return {
+      ...base,
+      ...saved,
+      px: pxOf(saved),
+      labelPos: saved.labelPos === "below" ? "below" : "above",
+      hat: isHat(saved.hat) ? saved.hat : null,
+      tag: isTag(saved.tag) ? saved.tag : null,
+      seasons: Array.isArray(saved.seasons) ? saved.seasons.filter(isSeason) : [],
+      quiet: saved.quiet === true,
+      weatherOn: saved.weatherOn === true,
+      place: safePlace(saved.place),
+    };
   } catch {
     return base;
   }
@@ -92,6 +114,8 @@ export type PeerState = {
   busy: boolean;
   /** 입력 없이 지난 분. 자리 비움일 때만 의미가 있다 */
   idleMin: number;
+  hat: HatId | null;
+  tag: TagId | null;
 };
 
 /** presence 상태(키별 배열)를 나를 뺀 친구 목록으로. 같은 사람이 여러 번 잡히면 마지막 것을 쓴다. */
@@ -114,6 +138,8 @@ function sanitizePeer(p: PeerState): PeerState {
     status: p.status === "away" || p.status === "typing" ? p.status : "idle",
     busy: p.busy === true,
     idleMin: Number.isFinite(p.idleMin) ? Math.min(Math.max(Math.floor(p.idleMin), 0), 100_000) : 0,
+    hat: isHat(p.hat) ? p.hat : null,
+    tag: isTag(p.tag) ? p.tag : null,
   };
 }
 
@@ -132,7 +158,18 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
   const offline = members
     .filter((m) => m.device_id !== selfId && !online.has(m.device_id))
     .map((m) => ({
-      ...sanitizePeer({ id: m.device_id, name: m.name, character: m.character_id as CharacterId, color: m.color, image: m.image, status: "idle", busy: false, idleMin: 0 }),
+      ...sanitizePeer({
+        id: m.device_id,
+        name: m.name,
+        character: m.character_id as CharacterId,
+        color: m.color,
+        image: m.image,
+        status: "idle",
+        busy: false,
+        idleMin: 0,
+        hat: null,
+        tag: null,
+      }),
       online: false,
       lastSeen: Date.parse(m.last_seen) || null,
     }))
@@ -235,20 +272,46 @@ export const REPLIES: Record<Emote, readonly [Emote, Emote, Emote]> = {
   "☕": ["☕", "👍", "👋"],
 };
 
+/** 친구에게 던질 수 있는 것과, 맞은 펫의 반응 */
+export const THROWABLES = {
+  "🏐": { name: "말랑공", hit: "dizzy" },
+  "🍌": { name: "바나나", hit: "slip" },
+  "🍅": { name: "토마토", hit: "splat" },
+  "🪶": { name: "깃털", hit: "laugh" },
+} as const satisfies Record<string, { name: string; hit: Motion }>;
+export type Throwable = keyof typeof THROWABLES;
+
 /**
  * 방 안에 broadcast로 퍼지는 반응. by(보낸 사람 id)가 from(이름)으로 target 펫에 무엇을 했는지.
- * 몸짓은 이모티콘에서 각자 정하므로 따로 보내지 않는다.
+ * - dizzy/happy: 흔들기·쓰다듬기
+ * - emote: 이모티콘 (보낸 펫은 몸짓)
+ * - throw: 물건 던지기 (포물선으로 날아가 맞으면 반응)
+ * - big: 더블클릭 크게 인사 (target = 나)
+ * - poke: 콕 찌르기
+ * - gift: 선물 상자 놓기 (hat = 들어 있는 모자, 보낸 사람이 정해서 모두 같은 걸 본다)
+ * - open: 받은 사람이 상자 열기
  */
-export type Reaction = { target: string; by: string; from: string; kind: "dizzy" | "happy" | "emote"; emoji?: Emote };
+export type Reaction = {
+  target: string;
+  by: string;
+  from: string;
+  kind: "dizzy" | "happy" | "emote" | "throw" | "big" | "poke" | "gift" | "open";
+  emoji?: Emote;
+  item?: Throwable;
+  hat?: HatId;
+};
 
 const isEmote = (e: unknown): e is Emote => (EMOTES as readonly unknown[]).includes(e);
+const isThrowable = (e: unknown): e is Throwable => typeof e === "string" && Object.prototype.hasOwnProperty.call(THROWABLES, e);
 
-/** 친구가 보낸 반응은 정해진 종류와 이모티콘일 때만 받는다. */
+/** 친구가 보낸 반응은 정해진 종류와 이모티콘·물건일 때만 받는다. */
 export function sanitizeReaction(raw: unknown): Reaction | null {
   const r = raw as Partial<Reaction> | null;
   if (!r || typeof r.target !== "string" || typeof r.from !== "string" || typeof r.by !== "string") return null;
   const base = { target: r.target, by: r.by, from: r.from.slice(0, 20) };
-  if (r.kind === "dizzy" || r.kind === "happy") return { ...base, kind: r.kind };
+  if (r.kind === "dizzy" || r.kind === "happy" || r.kind === "big" || r.kind === "poke") return { ...base, kind: r.kind };
   if (r.kind === "emote" && isEmote(r.emoji)) return { ...base, kind: "emote", emoji: r.emoji };
+  if (r.kind === "throw" && isThrowable(r.item)) return { ...base, kind: "throw", item: r.item };
+  if ((r.kind === "gift" || r.kind === "open") && isHat(r.hat)) return { ...base, kind: r.kind, hat: r.hat };
   return null;
 }

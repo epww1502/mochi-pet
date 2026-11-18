@@ -551,3 +551,374 @@ html[data-view="settings"] body {
   border-color: var(--line);
   font-weight: 700;
 }
+
+/* ---------- 던지기: 날아가는 물건과 점선 ---------- */
+.trail {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  animation: trail-fade 1.5s ease-out forwards;
+}
+
+.trail path {
+  fill: none;
+  stroke: rgb(255 255 255 / 0.9);
+  stroke-width: 2.5;
+  stroke-dasharray: 2 7;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 0.5));
+}
+
+@keyframes trail-fade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.flying {
+  position: fixed;
+  left: 0;
+  top: 0;
+  font-size: max(18px, calc(24px * var(--s)));
+  line-height: 1;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* ---------- 더블클릭 크게 인사 ---------- */
+.pet {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: 50% 100%;
+}
+
+.slot.big .pet {
+  transform: scale(1.8);
+  position: relative;
+  z-index: 3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trail {
+    display: none;
+  }
+}
+
+/* 잠든(납작한) 펫은 키가 절반이라 머리 위 이름표도 그만큼 내린다 */
+.slot.offline .name.above {
+  margin-bottom: calc(-50px * var(--s));
+}
+
+/* ---------- 모자를 쓴 펫: 머리가 2칸 높아져 이름표도 그만큼 덜 내린다 ---------- */
+.slot.hatted .name.above {
+  margin-bottom: calc(-5px * var(--s));
+}
+
+/* ---------- 선물 상자 ---------- */
+.gift {
+  position: absolute;
+  left: calc(-2px * var(--s)); /* 내 펫이 창 오른쪽 끝이라 왼쪽에 둔다 */
+  bottom: 0;
+  font-size: max(16px, calc(22px * var(--s)));
+  line-height: 1;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  animation: gift-bob 1.2s ease-in-out infinite;
+}
+
+.gift:disabled {
+  cursor: default;
+}
+
+.pet {
+  position: relative;
+}
+
+@keyframes gift-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(4deg);
+  }
+}
+
+.picker button.wide {
+  grid-column: span 3;
+  font-size: max(11px, calc(12px * var(--s)));
+  font-weight: 700;
+  background: var(--soft);
+}
+
+/* ---------- 조용히 모드: 안 읽은 채팅 수 ---------- */
+.unread {
+  margin-left: 4px;
+  padding: 0 calc(5px * var(--s));
+  border: 0;
+  border-radius: 999px;
+  background: #e5484d;
+  color: #fff;
+  font: inherit;
+  font-size: max(9px, calc(10px * var(--s)));
+  text-shadow: none;
+  cursor: pointer;
+}
+
+/* ---------- 계절 효과 ---------- */
+.season-fx {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.particle {
+  position: absolute;
+  top: -10px;
+  width: max(3px, calc(4px * var(--s)));
+  height: max(3px, calc(4px * var(--s)));
+  opacity: 0.85;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+
+.particle.fall {
+  animation-name: fall;
+}
+
+.particle.rise {
+  top: auto;
+  bottom: -10px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
+  animation-name: rise;
+}
+
+@keyframes fall {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate(var(--drift), 110vh) rotate(360deg);
+  }
+}
+
+@keyframes rise {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  20%,
+  80% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(var(--drift), -90vh);
+    opacity: 0;
+  }
+}
+
+.row {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- 트리 ---------- */
+.tree-btn {
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.slot.tree .name.above {
+  margin-bottom: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .season-fx {
+    display: none;
+  }
+  .gift {
+    animation: none;
+  }
+}
+
+/* 내 펫(맨 오른쪽) 위 칸은 창 밖으로 잘리지 않게 오른쪽에 맞춘다 */
+.row > .slot:first-child .picker,
+.row > .slot:first-child .chat-input {
+  align-self: flex-end;
+}
+
+/* ---------- 날씨 ---------- */
+.weather-fx {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.weather-fx .sun {
+  position: absolute;
+  left: 4%;
+  top: 6%;
+  animation: sun-glow 4s ease-in-out infinite;
+}
+
+@keyframes sun-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 4px #ffd84d);
+  }
+  50% {
+    filter: drop-shadow(0 0 12px #ffd84d);
+  }
+}
+
+.weather-fx .star {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: #fff;
+  animation: twinkle 2.4s ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.weather-fx .cloud {
+  position: absolute;
+  left: -20%;
+  animation-name: drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@keyframes drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(140vw);
+  }
+}
+
+.weather-fx .drop {
+  position: absolute;
+  top: -20px;
+  width: 2px;
+  height: 12px;
+  background: linear-gradient(transparent, #8fb8ff);
+  transform: rotate(12deg);
+  animation: rain-fall linear infinite;
+}
+
+.weather-fx.storm .drop {
+  background: linear-gradient(transparent, #a9c1e8);
+}
+
+@keyframes rain-fall {
+  to {
+    transform: translate(-24px, 110vh) rotate(12deg);
+  }
+}
+
+.weather-fx .flake {
+  position: absolute;
+  top: -8px;
+  width: 4px;
+  height: 4px;
+  background: #fff;
+  animation: fall linear infinite;
+  --drift: 20px;
+}
+
+.weather-fx .fog {
+  position: absolute;
+  left: -50%;
+  bottom: 10%;
+  width: 200%;
+  height: 40%;
+  background: radial-gradient(ellipse at center, rgb(220 225 230 / 0.45), transparent 70%);
+  animation: fog-move 30s ease-in-out infinite alternate;
+}
+
+.weather-fx .fog.second {
+  bottom: 35%;
+  animation-duration: 45s;
+  animation-direction: alternate-reverse;
+  opacity: 0.7;
+}
+
+@keyframes fog-move {
+  from {
+    transform: translateX(-10%);
+  }
+  to {
+    transform: translateX(10%);
+  }
+}
+
+.weather-fx .flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  animation: flash 7s infinite;
+}
+
+@keyframes flash {
+  0%,
+  90%,
+  93%,
+  100% {
+    opacity: 0;
+  }
+  91%,
+  94% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .weather-fx .drop,
+  .weather-fx .flake,
+  .weather-fx .flash {
+    display: none;
+  }
+  .weather-fx .cloud {
+    animation: none;
+    left: 10%;
+  }
+}
+
+.places {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 4px;
+}
+
+.places button {
+  width: 100%;
+  text-align: left;
+}

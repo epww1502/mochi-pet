@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { PetCanvas } from "./Pet";
+import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
 import { CHARACTERS, COLORS, type CharacterId } from "./sprites";
+import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
+import { useWeather } from "./WeatherFx";
 import { PX_DEFAULT, PX_MAX, PX_MIN, importImage, percentOf, saveSettings, supabase, useSettings, type Room } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
@@ -13,6 +16,9 @@ export function Settings() {
   const [msg, setMsg] = useState<string | null>(null);
   const [history, setHistory] = useState<Message[]>([]);
   const [copied, setCopied] = useState(false);
+  const [placeQ, setPlaceQ] = useState("");
+  const [found, setFound] = useState<(Place & { detail: string })[] | null>(null);
+  const weather = useWeather(s.weatherOn, s.place);
 
   const roomId = s.room?.id;
   useEffect(() => {
@@ -46,7 +52,7 @@ export function Settings() {
       <section>
         <h2>내 펫</h2>
         <div className="preview">
-          <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={6} />
+          <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={6} hat={s.hat} />
         </div>
         <label>
           닉네임
@@ -139,6 +145,144 @@ export function Settings() {
       </section>
 
       <section>
+        <h2>꾸미기</h2>
+        <div className="label">모자</div>
+        <div className="choices" role="radiogroup" aria-label="모자">
+          <button className={`pill${s.hat ? "" : " on"}`} role="radio" aria-checked={!s.hat} onClick={() => saveSettings({ hat: null })}>
+            없음
+          </button>
+          {(available(HATS, s.seasons) as HatId[]).map((id) => (
+            <button key={id} className={`pill${s.hat === id ? " on" : ""}`} role="radio" aria-checked={s.hat === id} onClick={() => saveSettings({ hat: id })}>
+              {HATS[id].icon} {HATS[id].name}
+            </button>
+          ))}
+        </div>
+        <div className="label">이름표</div>
+        <div className="choices" role="radiogroup" aria-label="이름표 꾸미기">
+          <button className={`pill${s.tag ? "" : " on"}`} role="radio" aria-checked={!s.tag} onClick={() => saveSettings({ tag: null })}>
+            기본
+          </button>
+          {(available(TAGS, s.seasons) as TagId[]).map((id) => (
+            <button key={id} className={`pill${s.tag === id ? " on" : ""}`} role="radio" aria-checked={s.tag === id} onClick={() => saveSettings({ tag: id })}>
+              {TAGS[id].icon} {TAGS[id].name}
+            </button>
+          ))}
+        </div>
+        <p className="muted small-left">친구가 보낸 선물 상자를 열면 랜덤 모자가 나와요. 꾸미기는 친구 화면에도 보여요.</p>
+      </section>
+
+      <section>
+        <h2>계절 꾸미기</h2>
+        <p className="muted small-left">켜고 싶은 계절만 골라요. 켜면 그 계절 모자·이름표가 생기고 화면에 계절 효과가 보여요. 내 화면에만 적용돼요.</p>
+        {SEASON_IDS.map((id) => (
+          <label key={id} className="check">
+            <input
+              type="checkbox"
+              checked={s.seasons.includes(id)}
+              onChange={(e) =>
+                saveSettings({
+                  seasons: e.target.checked ? [...s.seasons, id] : s.seasons.filter((x) => x !== id),
+                  // 계절을 끄면 그 계절 모자·이름표도 벗는다
+                  ...(!e.target.checked && s.hat && HATS[s.hat].season === id ? { hat: null } : {}),
+                  ...(!e.target.checked && s.tag && TAGS[s.tag].season === id ? { tag: null } : {}),
+                })
+              }
+            />
+            <span>
+              <b>
+                {SEASONS[id].icon} {SEASONS[id].name}
+              </b>
+              <br />
+              <span className="muted">{SEASONS[id].desc}</span>
+            </span>
+          </label>
+        ))}
+        {s.seasons.includes("winter") && s.room && (
+          <button
+            className="ghost"
+            onClick={async () => {
+              if (!confirm("방 트리의 장식을 모두 떼요. 친구들 트리도 같이 비워져요. 계속할까요?")) return;
+              await supabase.rpc("clear_tree", { p_room: s.room!.id });
+            }}
+          >
+            🎄 트리 비우기
+          </button>
+        )}
+      </section>
+
+      <section>
+        <h2>날씨</h2>
+        <label className="check">
+          <input type="checkbox" checked={s.weatherOn} onChange={(e) => saveSettings({ weatherOn: e.target.checked })} />
+          <span>
+            <b>실제 날씨 보여주기</b>
+            <br />
+            <span className="muted">비가 오면 비, 구름이 끼면 구름, 맑으면 해(밤엔 별)가 펫 창에 보여요. 30분마다 새로 받아요.</span>
+          </span>
+        </label>
+        {s.weatherOn && (
+          <>
+            <div className="label">
+              도시 {s.place ? `· ${s.place.name}` : "· 아직 안 골랐어요"}
+              {weather && (
+                <span className="muted">
+                  {" "}
+                  — 지금 {WEATHER_LABEL[weather.kind]} {weather.temp}°C
+                </span>
+              )}
+            </div>
+            <div className="choices">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.name}
+                  className={`pill${s.place?.name === p.name ? " on" : ""}`}
+                  aria-pressed={s.place?.name === p.name}
+                  onClick={() => saveSettings({ place: p })}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            <form
+              className="inline"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!placeQ.trim()) return;
+                try {
+                  setFound(await searchPlaces(placeQ));
+                } catch {
+                  setFound([]);
+                }
+              }}
+            >
+              <input value={placeQ} maxLength={40} placeholder="다른 지역 검색 (예: 춘천시, Gangneung)" onChange={(e) => setPlaceQ(e.target.value)} />
+              <button type="submit">검색</button>
+            </form>
+            {found && (
+              <ul className="places">
+                {found.length === 0 && <li className="muted">못 찾았어요. "OO시"처럼 전체 이름이나 영어로 찾아보세요.</li>}
+                {found.map((p) => (
+                  <li key={`${p.lat},${p.lon}`}>
+                    <button
+                      className="ghost"
+                      onClick={() => {
+                        saveSettings({ place: { name: p.name, lat: p.lat, lon: p.lon } });
+                        setFound(null);
+                        setPlaceQ("");
+                      }}
+                    >
+                      {p.name} <span className="muted">{p.detail}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="muted small-left">고른 도시의 좌표만 날씨 서비스(Open-Meteo)에 보내요. 내 위치를 자동으로 찾지 않아요.</p>
+          </>
+        )}
+      </section>
+
+      <section>
         <h2>내 상태</h2>
         <label className="check">
           <input type="checkbox" checked={s.busy} onChange={(e) => saveSettings({ busy: e.target.checked })} />
@@ -146,6 +290,14 @@ export function Settings() {
             <b>바쁨 (방해 금지)</b>
             <br />
             <span className="muted">친구에게 빨간 불로 보이고, 이모티콘을 받아도 답장 추천을 띄우지 않아요.</span>
+          </span>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={s.quiet} onChange={(e) => saveSettings({ quiet: e.target.checked })} />
+          <span>
+            <b>조용히 모드</b>
+            <br />
+            <span className="muted">친구 채팅 말풍선을 띄우지 않아요. 내 펫 이름표 옆에 안 읽은 개수(💬)만 쌓이고, 아래 최근 대화에서 모아 볼 수 있어요.</span>
           </span>
         </label>
         <p className="muted small-left">

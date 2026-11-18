@@ -11,6 +11,8 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   status: "idle",
   busy: false,
   idleMin: 0,
+  hat: null,
+  tag: null,
   ...extra,
 });
 
@@ -35,6 +37,12 @@ describe("presenceToPeers", () => {
     const peers = presenceToPeers({ a: [peer("a", "가람", { image: "https://evil.example/x.png" })] }, "me");
     expect(peers[0].image).toBeNull();
   });
+});
+
+it("모르는 모자나 이름표 꾸미기는 빼고 그린다", () => {
+  const bad = { ...peer("a", "가람"), hat: "tiara", tag: "<b>" } as unknown as PeerState;
+  const [p] = presenceToPeers({ a: [bad] }, "me");
+  expect([p.hat, p.tag]).toEqual([null, null]);
 });
 
 it("모르는 캐릭터나 색을 보내도 기본 찹쌀떡으로 그린다", () => {
@@ -101,6 +109,16 @@ describe("sanitizeReaction", () => {
     expect(sanitizeReaction({ ...base, kind: "explode" })).toBeNull();
     expect(sanitizeReaction({ target: "a", from: "가람", kind: "happy" })).toBeNull(); // 보낸 사람 id 없음
     expect(sanitizeReaction(null)).toBeNull();
+  });
+
+  it("던지기는 정해진 물건만, 인사와 콕 찌르기는 그대로 받는다", () => {
+    expect(sanitizeReaction({ ...base, kind: "throw", item: "🍌" })).toEqual({ ...base, kind: "throw", item: "🍌" });
+    expect(sanitizeReaction({ ...base, kind: "throw", item: "💣" })).toBeNull();
+    expect(sanitizeReaction({ ...base, kind: "throw", item: "constructor" })).toBeNull();
+    expect(sanitizeReaction({ ...base, kind: "big" })?.kind).toBe("big");
+    expect(sanitizeReaction({ ...base, kind: "poke" })?.kind).toBe("poke");
+    expect(sanitizeReaction({ ...base, kind: "gift", hat: "santa" })?.hat).toBe("santa");
+    expect(sanitizeReaction({ ...base, kind: "gift", hat: "tiara" })).toBeNull();
   });
 });
 
