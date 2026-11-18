@@ -33,7 +33,7 @@ describe("펫 모양 바꾸기", () => {
 
 
 import { HATS, HAT_IDS, TAGS, available } from "./decor";
-import { withHat } from "./sprites";
+import { CANVAS_H, CHARACTERS, HAT_DY_MIN, cleanHatOffset, hatDyMin, withHat } from "./sprites";
 
 describe("모자", () => {
   it("모든 모자는 16칸 x 4줄이고, 머리 높이에 맞춰 얹힌다", () => {
@@ -46,6 +46,33 @@ describe("모자", () => {
     const cat = petGrid("cat", "#fff", "idle", 0);
     expect(withHat(cat, "crown", 4).length).toBe(14); // 귀 사이 머리에 얹혀서 안 늘어난다
     expect(withHat(cat, null)).toBe(cat);
+  });
+
+  it("옮긴 모자: 아래로 내리면 그만큼 낮게, 옆으로 옮기면 양쪽을 늘려 몸은 가운데 그대로", () => {
+    const mochi = petGrid("mochi", "#fff", "idle", 0);
+    const down = withHat(mochi, "crown", 1, [0, 2]);
+    expect(down.length).toBe(14); // 머리 안으로 내려와서 안 늘어난다
+    const right = withHat(mochi, "crown", 1, [3, 0]);
+    expect(right[0].length).toBe(16 + 6);
+    expect(right[right.length - 1].slice(3, 19)).toEqual(mochi[13]); // 몸은 가운데
+    const plain = withHat(mochi, "crown", 1);
+    expect(right[0].slice(6)).toEqual(plain[0].slice(0, 16)); // 모자는 3칸 오른쪽
+    expect(withHat(mochi, "crown", 1, [0, HAT_DY_MIN]).length).toBe(18); // 위로 올리면 격자가 늘어나고 터지지 않는다
+  });
+
+  it("모자 위치 값은 정수, 범위 안으로", () => {
+    expect(cleanHatOffset([1.6, -9])).toEqual([2, -2]);
+    expect(cleanHatOffset(null)).toEqual([0, 0]);
+    expect(cleanHatOffset([1])).toEqual([0, 0]);
+    expect(cleanHatOffset([0, -2], hatDyMin("mochi", false))).toEqual([0, -1]);
+  });
+
+  it("모자를 위로 올려도 숨쉬며 뜰 때(1칸) 캔버스 위로 잘리지 않는다", () => {
+    for (const id of Object.keys(CHARACTERS) as (keyof typeof CHARACTERS)[]) {
+      const g = withHat(petGrid(id, "#fff", "idle", 0), "crown", CHARACTERS[id].headY, [0, hatDyMin(id, false)]);
+      expect(g.length + 1, id).toBeLessThanOrEqual(CANVAS_H);
+    }
+    expect(hatDyMin("cat", true)).toBe(0);
   });
 
   it("계절 모자·이름표는 그 계절을 켰을 때만 고를 수 있다", () => {

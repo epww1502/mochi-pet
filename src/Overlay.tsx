@@ -190,6 +190,7 @@ export function Overlay() {
     busy: s.busy,
     idleMin: away ? idleMin : 0, // 자리에 있을 땐 0으로 둬서 presence를 1분마다 다시 보내지 않는다
     hat: s.hat,
+    hatOffset: s.hatOffset,
     tag: s.tag,
     px: s.px,
     msg: s.statusMsg,
@@ -1219,7 +1220,7 @@ function PetSlot({
   // 이름표: 상태 불 + 이름 (+ 자리 비움/바쁨/마지막 접속)
   const tag = peer.tag ? TAGS[peer.tag] : null;
   // 모자가 머리 위로 솟는 경우(머리가 맨 윗줄인 캐릭터·그림)만 이름표를 덜 내린다
-  const hatTall = !!peer.hat && (!!peer.image || CHARACTERS[peer.character].headY < 3);
+  const hatTall = !!peer.hat && (!!peer.image || CHARACTERS[peer.character].headY + peer.hatOffset[1] < 3);
   const label = (
     <div className={`name ${labelPos}`} title={light.text || "온라인"}>
       <span className={`light ${light.color}`} aria-hidden />
@@ -1254,6 +1255,7 @@ function PetSlot({
           px={peer.px}
           walk={walk}
           hat={peer.hat}
+          hatOffset={peer.hatOffset}
         />
         {gift && (
           <button

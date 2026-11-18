@@ -2,10 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
-import { CHARACTERS, COLORS, type CharacterId } from "./sprites";
+import { CHARACTERS, COLORS, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset } from "./sprites";
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
 import { useWeather } from "./WeatherFx";
-import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, saveSettings, supabase, useSettings, type Room } from "./state";
+import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, saveSettings, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -53,9 +53,7 @@ export function Settings() {
 
       <section>
         <h2>내 펫</h2>
-        <div className="preview">
-          <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={6} hat={s.hat} />
-        </div>
+        <PreviewWithHatDrag s={s} />
         <label>
           닉네임
           <div className="inline">
@@ -71,7 +69,7 @@ export function Settings() {
             <button
               key={id}
               className={`choice${!s.image && s.character === id ? " on" : ""}`}
-              onClick={() => saveSettings({ character: id, image: null })}
+              onClick={() => saveSettings({ character: id, image: null, ...(s.image || s.character !== id ? { hatOffset: [0, 0] } : {}) })}
               aria-pressed={!s.image && s.character === id}
             >
               <PetCanvas character={id} color={s.color} mood="idle" px={3} />
@@ -90,7 +88,7 @@ export function Settings() {
                 if (!file) return;
                 setMsg(null);
                 try {
-                  saveSettings({ image: await importImage(file) });
+                  saveSettings({ image: await importImage(file), hatOffset: [0, 0] }); // 머리 위치가 달라지니 모자도 제자리로
                 } catch {
                   setMsg("그림을 읽지 못했어요. PNG나 JPG 파일로 다시 해 주세요.");
                 }
@@ -159,6 +157,16 @@ export function Settings() {
             </button>
           ))}
         </div>
+        {s.hat && (
+          <p className="muted small-left hat-hint">
+            위 미리보기에서 모자를 끌어서 옮길 수 있어요
+            {(s.hatOffset[0] !== 0 || s.hatOffset[1] !== 0) && (
+              <button className="pill" onClick={() => saveSettings({ hatOffset: [0, 0] })}>
+                제자리로
+              </button>
+            )}
+          </p>
+        )}
         <div className="label">이름표</div>
         <div className="choices" role="radiogroup" aria-label="이름표 꾸미기">
           <button className={`pill${s.tag ? "" : " on"}`} role="radio" aria-checked={!s.tag} onClick={() => saveSettings({ tag: null })}>
@@ -413,5 +421,52 @@ export function Settings() {
 
       <p className="muted small">펫 클릭: 채팅 · 끌기: 옮기기 · 오른쪽 클릭: 설정·종료 메뉴</p>
     </main>
+  );
+}
+
+const PREVIEW_PX = 6; // 미리보기 한 칸 = 화면 6px
+
+/**
+ * 설정 맨 위 미리보기. 모자를 쓰고 있으면 마우스로 끌어서 칸 단위로 옮긴다(방향키도 된다).
+ * 끄는 동안은 여기서만 보여 주고, 놓을 때 한 번 저장한다 → 친구에게 위치를 매 픽셀마다 보내지 않는다.
+ */
+function PreviewWithHatDrag({ s }: { s: PetSettings }) {
+  const [drag, setDrag] = useState<{ x0: number; y0: number; from: HatOffset } | null>(null);
+  const [live, setLive] = useState<HatOffset | null>(null);
+  const offset = live ?? s.hatOffset;
+  const canDrag = !!s.hat;
+  const fit = (v: [number, number]) => cleanHatOffset(v, hatDyMin(s.character, !!s.image));
+  const end = () => {
+    if (live) saveSettings({ hatOffset: live });
+    setDrag(null);
+    setLive(null);
+  };
+  return (
+    <div
+      className={`preview${canDrag ? " hat-drag" : ""}${drag ? " dragging" : ""}`}
+      tabIndex={canDrag ? 0 : undefined}
+      role={canDrag ? "application" : undefined}
+      aria-label={canDrag ? "모자 위치: 끌거나 방향키로 옮기기" : undefined}
+      onPointerDown={(e) => {
+        if (!canDrag || e.button !== 0) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDrag({ x0: e.clientX, y0: e.clientY, from: s.hatOffset });
+        setLive(s.hatOffset);
+      }}
+      onPointerMove={(e) => {
+        if (!drag) return;
+        setLive(fit([drag.from[0] + (e.clientX - drag.x0) / PREVIEW_PX, drag.from[1] + (e.clientY - drag.y0) / PREVIEW_PX]));
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onKeyDown={(e) => {
+        const step = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key];
+        if (!canDrag || !step) return;
+        e.preventDefault();
+        saveSettings({ hatOffset: fit([s.hatOffset[0] + step[0], s.hatOffset[1] + step[1]]) });
+      }}
+    >
+      <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={offset} />
+    </div>
   );
 }

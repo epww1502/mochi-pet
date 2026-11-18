@@ -173,17 +173,47 @@ function face(mood: Mood, t: number): { eyes: Px[]; mouth: Px[]; cheeks: boolean
  * 모자를 머리 위에 얹는다. 모자 4줄 중 맨 아랫줄이 머리 윗줄(headY)에 걸친다.
  * 머리 위로 삐져나오는 만큼 격자를 위로 늘린다.
  */
-export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1): Grid {
+export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1, [dx, dy]: HatOffset = [0, 0]): Grid {
   if (!hat) return g;
-  const extra = Math.max(0, 3 - headY);
-  const out: Grid = [...Array.from({ length: extra }, () => Array(16).fill(null)), ...g.map((r) => [...r])];
-  const base = extra + headY - 3; // 모자 0번 줄이 들어갈 자리
+  // 옆으로 옮긴 만큼 양쪽을 똑같이 늘린다: 가운데가 그대로라 몸이 안 밀리고, 좌우 반전해도 모자가 같은 자리에 있다
+  const pad = Math.abs(dx);
+  const width = g[0].length + pad * 2;
+  const side = () => Array(pad).fill(null);
+  const extra = Math.max(0, 3 - headY - dy);
+  const out: Grid = [
+    ...Array.from({ length: extra }, () => Array(width).fill(null)),
+    ...g.map((r) => [...side(), ...r, ...side()]),
+  ];
+  const base = extra + headY - 3 + dy; // 모자 0번 줄이 들어갈 자리
   HATS[hat].rows.forEach((row, y) =>
     [...row].forEach((c, x) => {
-      if (HAT_COLORS[c]) out[base + y][x] = HAT_COLORS[c];
+      const r = out[base + y];
+      if (HAT_COLORS[c] && r) r[x + pad + dx] = HAT_COLORS[c];
     }),
   );
   return out;
+}
+
+/** 모자를 원래 자리에서 옮긴 칸 수 [오른쪽, 아래]. 설정 미리보기에서 끌어서 정한다. */
+export type HatOffset = readonly [number, number];
+export const HAT_DX_MAX = 5;
+export const HAT_DY_MIN = -2; // 위로는 캔버스 여유만큼만
+export const HAT_DY_MAX = 8;
+
+/**
+ * 모자를 위로 올릴 수 있는 한계. 캔버스 위 여유가 펫마다 달라서, 숨쉬며 1칸 뜰 때 모자 윗줄이 잘리지 않을 만큼만.
+ * 머리가 맨 윗줄인 펫(찹쌀떡·유령)은 1칸, 그림 펫은 그림이 꽉 찰 수 있어 못 올린다.
+ */
+export function hatDyMin(character: CharacterId, image: boolean): number {
+  return image ? 0 : Math.max(HAT_DY_MIN, -CHARACTERS[character].headY);
+}
+
+/** 저장된 값이나 친구가 보낸 값을 범위 안의 정수로. 이상하면 제자리. */
+export function cleanHatOffset(v: unknown, dyMin = HAT_DY_MIN): HatOffset {
+  if (!Array.isArray(v) || v.length !== 2) return [0, 0];
+  const n = (x: unknown, lo: number, hi: number) =>
+    typeof x === "number" && Number.isFinite(x) ? Math.min(hi, Math.max(lo, Math.round(x))) : 0;
+  return [n(v[0], -HAT_DX_MAX, HAT_DX_MAX), n(v[1], dyMin, HAT_DY_MAX)];
 }
 
 /** 몸통 + 발 + 얼굴을 16x14 칸 색 격자로. stepping이면 발을 번갈아 든다(걷기). */
@@ -277,10 +307,11 @@ export function drawPet(
   t: number,
   walk: Walk | null = null,
   hat: HatId | null = null,
+  hatOffset: HatOffset = [0, 0],
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
-  let g = withHat(petGrid(character, color, mood, t, w.moving), hat, CHARACTERS[character].headY);
+  let g = withHat(petGrid(character, color, mood, t, w.moving), hat, CHARACTERS[character].headY, hatOffset);
   if (mood === "sleep") g = squash(g);
   if (mood === "slip") g = rotateRight(g);
   if (w.faceLeft) g = mirror(g);
@@ -299,6 +330,7 @@ export function drawImagePet(
   t: number,
   walk: Walk | null = null,
   hat: HatId | null = null,
+  [dx, dy]: HatOffset = [0, 0],
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
@@ -317,9 +349,11 @@ export function drawImagePet(
   ctx.drawImage(img, -Math.round(fit.w / 2), -h, fit.w, h);
   ctx.restore();
   if (hat && mood !== "slip") {
-    // 그림 윗변에 모자 아랫줄이 걸치게
+    // 그림 윗변에 모자 아랫줄이 걸치게 (+ 옮긴 만큼. 왼쪽을 보면 좌우도 반대로)
     const hatGrid = withHat([Array(16).fill(null)], hat, 0).slice(0, 4);
-    paint(ctx, px, w.faceLeft ? mirror(hatGrid) : hatGrid, w.x + sway(mood, t), Math.round((bottom - h) / px) - 3);
+    const left = w.x + sway(mood, t) + (w.faceLeft ? -dx : dx);
+    const sleepDy = mood === "sleep" ? Math.round(dy / 2) : dy; // 잘 땐 그림이 반으로 납작해지니 옮긴 거리도 반
+    paint(ctx, px, w.faceLeft ? mirror(hatGrid) : hatGrid, left, Math.round((bottom - h) / px) - 3 + sleepDy);
   }
   drawExtras(ctx, px, w.x, top, mood, t);
 }

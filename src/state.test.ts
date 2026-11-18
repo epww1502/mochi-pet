@@ -12,6 +12,7 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   busy: false,
   idleMin: 0,
   hat: null,
+  hatOffset: [0, 0],
   tag: null,
   px: 5,
   msg: "",
@@ -19,6 +20,16 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
 });
 
 describe("presenceToPeers", () => {
+  it("친구가 옮긴 모자 위치를 받되, 옛 버전이거나 이상한 값이면 제자리·범위 안으로", () => {
+    const old = { ...peer("a", "가람") } as Partial<PeerState>;
+    delete old.hatOffset; // v0.2.9 이전 친구는 안 보낸다
+    const peers = presenceToPeers(
+      { a: [old as PeerState], b: [peer("b", "나래", { hatOffset: [2, -1] })], c: [peer("c", "다온", { hatOffset: [99, "x" as unknown as number] })] },
+      "me",
+    );
+    expect(peers.map((p) => p.hatOffset)).toEqual([[0, 0], [2, -1], [5, 0]]);
+  });
+
   it("친구가 정한 펫 크기를 쓰되, 범위 밖이면 맞춘다", () => {
     const peers = presenceToPeers({ a: [peer("a", "가람", { px: 10 })], b: [peer("b", "나래", { px: 999 })] }, "me");
     expect(peers.map((p) => p.px)).toEqual([10, 12]);

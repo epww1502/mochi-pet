@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { isHat, isSeason, isTag, type HatId, type SeasonId, type TagId } from "./decor";
 import { safePlace, type Place } from "./weather";
-import { CHARACTERS, type CharacterId, type Mood, type Motion } from "./sprites";
+import { CHARACTERS, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset, type Mood, type Motion } from "./sprites";
 
 // 공개해도 되는 키(publishable). 테이블은 RLS로 잠겨 있고 함수로만 접근한다.
 export const supabase = createClient(
@@ -28,6 +28,8 @@ export type Settings = {
   /** 이름표를 펫 머리 위에 둘지 발 아래에 둘지 (내 화면의 모든 펫에 적용) */
   labelPos: "above" | "below";
   hat: HatId | null;
+  /** 모자를 옮긴 칸 수 [오른쪽, 아래]. 설정 미리보기에서 끌어서 정한다 */
+  hatOffset: HatOffset;
   tag: TagId | null;
   /** 켠 계절 꾸미기 (기본 없음) */
   seasons: SeasonId[];
@@ -72,7 +74,7 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "" };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "" };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
@@ -81,6 +83,10 @@ function load(): Settings {
       px: pxOf(saved),
       labelPos: saved.labelPos === "below" ? "below" : "above",
       hat: isHat(saved.hat) ? saved.hat : null,
+      hatOffset: cleanHatOffset(
+        saved.hatOffset,
+        hatDyMin(Object.prototype.hasOwnProperty.call(CHARACTERS, saved.character) ? saved.character : "mochi", !!saved.image),
+      ),
       tag: isTag(saved.tag) ? saved.tag : null,
       seasons: Array.isArray(saved.seasons) ? saved.seasons.filter(isSeason) : [],
       quiet: saved.quiet === true,
@@ -137,6 +143,8 @@ export type PeerState = {
   /** 입력 없이 지난 분. 자리 비움일 때만 의미가 있다 */
   idleMin: number;
   hat: HatId | null;
+  /** 모자 위치 (옛 버전 친구는 안 보낸다 → 제자리) */
+  hatOffset: HatOffset;
   tag: TagId | null;
   /** 이 펫의 크기(픽셀 한 칸). 주인이 정한 크기로 모두의 화면에 보인다 */
   px: number;
@@ -155,16 +163,19 @@ export function presenceToPeers(state: Record<string, PeerState[]>, selfId: stri
 
 /** 친구가 보낸 상태는 믿지 않는다: 모르는 캐릭터나 이상한 값이면 기본값으로. */
 function sanitizePeer(p: PeerState): PeerState {
+  const character = Object.prototype.hasOwnProperty.call(CHARACTERS, p.character) ? p.character : "mochi";
+  const image = safeImage(p.image);
   return {
     id: String(p.id),
     name: String(p.name ?? "").slice(0, 20) || "친구",
-    character: Object.prototype.hasOwnProperty.call(CHARACTERS, p.character) ? p.character : "mochi",
+    character,
     color: /^#[0-9a-f]{6}$/i.test(String(p.color)) ? p.color : "#ffe7c7",
-    image: safeImage(p.image),
+    image,
     status: p.status === "away" || p.status === "typing" ? p.status : "idle",
     busy: p.busy === true,
     idleMin: Number.isFinite(p.idleMin) ? Math.min(Math.max(Math.floor(p.idleMin), 0), 100_000) : 0,
     hat: isHat(p.hat) ? p.hat : null,
+    hatOffset: cleanHatOffset(p.hatOffset, hatDyMin(character, !!image)),
     tag: isTag(p.tag) ? p.tag : null,
     px: pxOf({ px: p.px }),
     msg: cleanMsg(p.msg),
@@ -205,6 +216,7 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
         busy: false,
         idleMin: 0,
         hat: null,
+        hatOffset: [0, 0],
         tag: null,
         px: PX_DEFAULT,
         msg: "",

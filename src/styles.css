@@ -224,6 +224,25 @@ html[data-view="settings"] body {
   margin-bottom: 10px;
 }
 
+/* 모자를 끌어서 옮기기 */
+.preview.hat-drag {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  border-radius: 8px;
+}
+.preview.hat-drag.dragging {
+  cursor: grabbing;
+  background: var(--soft);
+}
+
+.hat-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .choices {
   display: flex;
   flex-wrap: wrap;
