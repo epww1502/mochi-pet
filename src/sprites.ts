@@ -173,7 +173,7 @@ function face(mood: Mood, t: number): { eyes: Px[]; mouth: Px[]; cheeks: boolean
  * 모자를 머리 위에 얹는다. 모자 4줄 중 맨 아랫줄이 머리 윗줄(headY)에 걸친다.
  * 머리 위로 삐져나오는 만큼 격자를 위로 늘린다.
  */
-export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1, [dx, dy]: HatOffset = [0, 0]): Grid {
+export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1, [dx, dy]: HatOffset = [0, 0], mark = false): Grid {
   if (!hat) return g;
   // 옆으로 옮긴 만큼 양쪽을 똑같이 늘린다: 가운데가 그대로라 몸이 안 밀리고, 좌우 반전해도 모자가 같은 자리에 있다
   const pad = Math.abs(dx);
@@ -188,7 +188,8 @@ export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1, [dx, 
   HATS[hat].rows.forEach((row, y) =>
     [...row].forEach((c, x) => {
       const r = out[base + y];
-      if (HAT_COLORS[c] && r) r[x + pad + dx] = HAT_COLORS[c];
+      // mark: 모자 칸을 "H|밑에 있던 색"으로 표시만 해 둔다 (크기를 바꾼 모자는 따로 그린다)
+      if (HAT_COLORS[c] && r) r[x + pad + dx] = mark ? HAT_MARK + (r[x + pad + dx] ?? "") : HAT_COLORS[c];
     }),
   );
   return out;
@@ -199,6 +200,43 @@ export type HatOffset = readonly [number, number];
 export const HAT_DX_MAX = 5;
 export const HAT_DY_MIN = -2; // 위로는 캔버스 여유만큼만
 export const HAT_DY_MAX = 8;
+
+/** 모자 크기 단계 (1 = 원래 크기). 캔버스 위 여유가 4칸뿐이라 크게는 1.25배까지 */
+export const HAT_SCALES = [0.75, 1, 1.25] as const;
+export type HatScale = (typeof HAT_SCALES)[number];
+export function cleanHatScale(v: unknown): HatScale {
+  return (HAT_SCALES as readonly unknown[]).includes(v) ? (v as HatScale) : 1;
+}
+const HAT_MARK = "H|";
+
+/** 모자 그림에서 실제로 칠한 칸의 범위 */
+function hatBox(hat: HatId) {
+  let x0 = 99, x1 = -1, y0 = 99, y1 = -1;
+  HATS[hat].rows.forEach((row, y) =>
+    [...row].forEach((c, x) => {
+      if (!HAT_COLORS[c]) return;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }),
+  );
+  return { x0, x1, y0, y1 };
+}
+
+/** 크기를 바꾼 모자: 아래 가운데(cx, bottom, 실제 픽셀)에 맞춰 한 칸 = px*scale로 그린다 */
+function paintScaledHat(ctx: CanvasRenderingContext2D, px: number, hat: HatId, cx: number, bottom: number, scale: number, flip: boolean) {
+  const hp = Math.max(1, Math.round(px * scale));
+  const { x0, x1, y0, y1 } = hatBox(hat);
+  if (x1 < 0) return;
+  const left = Math.round(cx - ((x1 - x0 + 1) * hp) / 2);
+  const top = Math.round(bottom - (y1 - y0 + 1) * hp);
+  HATS[hat].rows.forEach((row, y) =>
+    [...row].forEach((c, x) => {
+      const color = HAT_COLORS[c];
+      if (!color) return;
+      ctx.fillStyle = color;
+      ctx.fillRect(left + (flip ? x1 - x : x - x0) * hp, top + (y - y0) * hp, hp, hp);
+    }),
+  );
+}
 
 /**
  * 모자를 위로 올릴 수 있는 한계. 캔버스 위 여유가 펫마다 달라서, 숨쉬며 1칸 뜰 때 모자 윗줄이 잘리지 않을 만큼만.
@@ -308,20 +346,32 @@ export function drawPet(
   walk: Walk | null = null,
   hat: HatId | null = null,
   hatOffset: HatOffset = [0, 0],
+  hatScale = 1,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
-  let g = withHat(petGrid(character, color, mood, t, w.moving), hat, CHARACTERS[character].headY, hatOffset);
+  // 크기를 바꾼 모자는 자리만 표시해 두고(몸과 똑같이 눕히고 뒤집히게) 나중에 그 자리에 크게/작게 그린다
+  const scaled = !!hat && hatScale !== 1 && mood !== "slip";
+  let g = withHat(petGrid(character, color, mood, t, w.moving), hat, CHARACTERS[character].headY, hatOffset, scaled);
   if (mood === "sleep") g = squash(g);
   if (mood === "slip") g = rotateRight(g);
   if (w.faceLeft) g = mirror(g);
   const left = w.x + sway(mood, t) + Math.floor((16 - g[0].length) / 2);
   const top = CANVAS_H - g.length - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
-  paint(ctx, px, g, left, top);
+  if (scaled && hat) {
+    let x0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    g = g.map((row, y) =>
+      row.map((c, x) => {
+        if (!c?.startsWith(HAT_MARK)) return c;
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        return c.slice(HAT_MARK.length) || null; // 모자 밑에 가려졌던 몸
+      }),
+    );
+    paint(ctx, px, g, left, top);
+    if (x1 >= 0) paintScaledHat(ctx, px, hat, (left + (x0 + x1 + 1) / 2) * px, (top + y1 + 1) * px, hatScale, w.faceLeft);
+  } else paint(ctx, px, g, left, top);
   drawExtras(ctx, px, w.x, CANVAS_H - 14 - hop(mood, t), mood, t);
 }
-
-/** 가져온 그림을 14x14칸 자리에 바닥 맞춤으로 그린다. 표정 대신 몸짓(걷기, 콩콩, 휘청, 납작, 꽈당)과 효과로 반응한다. */
 export function drawImagePet(
   ctx: CanvasRenderingContext2D,
   px: number,
@@ -331,6 +381,7 @@ export function drawImagePet(
   walk: Walk | null = null,
   hat: HatId | null = null,
   [dx, dy]: HatOffset = [0, 0],
+  hatScale = 1,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
@@ -353,21 +404,28 @@ export function drawImagePet(
     const hatGrid = withHat([Array(16).fill(null)], hat, 0).slice(0, 4);
     const left = w.x + sway(mood, t) + (w.faceLeft ? -dx : dx);
     const sleepDy = mood === "sleep" ? Math.round(dy / 2) : dy; // 잘 땐 그림이 반으로 납작해지니 옮긴 거리도 반
-    paint(ctx, px, w.faceLeft ? mirror(hatGrid) : hatGrid, left, Math.round((bottom - h) / px) - 3 + sleepDy);
+    const hatTop = Math.round((bottom - h) / px) - 3 + sleepDy;
+    if (hatScale === 1) paint(ctx, px, w.faceLeft ? mirror(hatGrid) : hatGrid, left, hatTop);
+    else {
+      const { x0, x1, y1 } = hatBox(hat);
+      const mid = w.faceLeft ? 16 - (x0 + x1 + 1) / 2 : (x0 + x1 + 1) / 2;
+      paintScaledHat(ctx, px, hat, (left + mid) * px, (hatTop + y1 + 1) * px, hatScale, w.faceLeft);
+    }
   }
   drawExtras(ctx, px, w.x, top, mood, t);
 }
 
 /**
- * 그림을 box 안에 넣을 크기. 작은 픽셀아트는 정수배로만 키워서 칸이 고르게(또렷하게),
- * box보다 큰 그림은 부드럽게 줄인다.
+ * 그림을 box 안에 넣을 크기. 정수배로 box를 거의(85% 넘게) 채우면 정수배로 또렷하게,
+ * 아니면 box에 딱 맞게 늘린다(픽셀은 살짝 고르지 않아도 크기 조절이 그대로 보이게).
+ * 키울 땐 또렷하게, 줄일 땐 부드럽게.
  */
 export function fitImage(iw: number, ih: number, box: number): { w: number; h: number; smooth: boolean } {
   const side = Math.max(iw, ih, 1);
   const n = Math.floor(box / side);
-  if (n >= 1) return { w: iw * n, h: ih * n, smooth: false };
+  if (n >= 1 && n * side >= box * 0.85) return { w: iw * n, h: ih * n, smooth: false };
   const s = box / side;
-  return { w: Math.round(iw * s), h: Math.round(ih * s), smooth: true };
+  return { w: Math.max(1, Math.round(iw * s)), h: Math.max(1, Math.round(ih * s)), smooth: s < 1 };
 }
 
 const HEART = [".x.x.", "xxxxx", ".xxx.", "..x.."];

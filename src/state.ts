@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { isHat, isSeason, isTag, type HatId, type SeasonId, type TagId } from "./decor";
 import { safePlace, type Place } from "./weather";
 import { cleanBday, cleanTime } from "./events";
-import { CHARACTERS, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset, type Mood, type Motion } from "./sprites";
+import { CHARACTERS, cleanHatOffset, cleanHatScale, hatDyMin, type CharacterId, type HatOffset, type HatScale, type Mood, type Motion } from "./sprites";
 
 // 공개해도 되는 키(publishable). 테이블은 RLS로 잠겨 있고 함수로만 접근한다.
 export const supabase = createClient(
@@ -31,6 +31,8 @@ export type Settings = {
   hat: HatId | null;
   /** 모자를 옮긴 칸 수 [오른쪽, 아래]. 설정 미리보기에서 끌어서 정한다 */
   hatOffset: HatOffset;
+  /** 모자 크기 (1 = 원래) */
+  hatScale: HatScale;
   tag: TagId | null;
   /** 켠 계절 꾸미기 (기본 없음) */
   seasons: SeasonId[];
@@ -90,7 +92,7 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
@@ -103,6 +105,7 @@ function load(): Settings {
         saved.hatOffset,
         hatDyMin(Object.prototype.hasOwnProperty.call(CHARACTERS, saved.character) ? saved.character : "mochi", !!saved.image),
       ),
+      hatScale: cleanHatScale(saved.hatScale),
       tag: isTag(saved.tag) ? saved.tag : null,
       seasons: Array.isArray(saved.seasons) ? saved.seasons.filter(isSeason) : [],
       quiet: saved.quiet === true,
@@ -169,6 +172,8 @@ export type PeerState = {
   hat: HatId | null;
   /** 모자 위치 (옛 버전 친구는 안 보낸다 → 제자리) */
   hatOffset: HatOffset;
+  /** 모자 크기 (1 = 원래) */
+  hatScale: HatScale;
   tag: TagId | null;
   /** 이 펫의 크기(픽셀 한 칸). 주인이 정한 크기로 모두의 화면에 보인다 */
   px: number;
@@ -202,6 +207,7 @@ function sanitizePeer(p: PeerState): PeerState {
     idleMin: Number.isFinite(p.idleMin) ? Math.min(Math.max(Math.floor(p.idleMin), 0), 100_000) : 0,
     hat: isHat(p.hat) ? p.hat : null,
     hatOffset: cleanHatOffset(p.hatOffset, hatDyMin(character, !!image)),
+    hatScale: cleanHatScale(p.hatScale),
     tag: isTag(p.tag) ? p.tag : null,
     px: pxOf({ px: p.px }),
     msg: cleanMsg(p.msg),
@@ -244,6 +250,7 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
         idleMin: 0,
         hat: null,
         hatOffset: [0, 0],
+        hatScale: 1,
         tag: null,
         px: PX_DEFAULT,
         msg: "",
@@ -315,6 +322,18 @@ export async function importImage(file: File): Promise<string> {
   } finally {
     bitmap.close();
   }
+}
+
+/** 친구가 보낸 채팅: 보낸 사람 id와 글자(300자까지)만 받는다 */
+export const CHAT_MAX = 300;
+export function sanitizeChat(raw: unknown): { sender_id: string; body: string } | null {
+  const m = raw as Record<string, unknown> | null;
+  if (!m || typeof m !== "object") return null;
+  const { sender_id, body } = m;
+  if (typeof sender_id !== "string" || !sender_id || sender_id.length > 60) return null;
+  if (typeof body !== "string") return null;
+  const text = body.trim().slice(0, CHAT_MAX);
+  return text ? { sender_id, body: text } : null;
 }
 
 /** 친구 펫을 눌러 보낼 수 있는 이모티콘 */

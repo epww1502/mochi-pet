@@ -13,6 +13,8 @@ type Props = {
   hat?: HatId | null;
   /** 모자를 옮긴 칸 수 [오른쪽, 아래] */
   hatOffset?: HatOffset;
+  /** 모자 크기 (1 = 원래) */
+  hatScale?: number;
 };
 
 /** 화면 배율(레티나 2, 윈도우 125% 등). 창을 다른 모니터로 옮기면 바뀐다. */
@@ -26,7 +28,7 @@ function useDevicePixelRatio() {
   return dpr;
 }
 
-export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0] }: Props) {
+export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0], hatScale = 1 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const dpr = useDevicePixelRatio();
   // 캔버스를 화면의 실제 픽셀로 그린다. 한 칸 = 정수 개의 실제 픽셀이라 늘려 보일 때 뭉개지지 않는다.
@@ -43,13 +45,13 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
     const tick = () => {
       const t = (performance.now() - born) / 1000;
       if (img) {
-        if (img.complete) drawImagePet(ctx, cell, img, mood, t, walkRef.current, hat, [dx, dy]);
-      } else drawPet(ctx, cell, character, color, mood, t, walkRef.current, hat, [dx, dy]);
+        if (img.complete) drawImagePet(ctx, cell, img, mood, t, walkRef.current, hat, [dx, dy], hatScale);
+      } else drawPet(ctx, cell, character, color, mood, t, walkRef.current, hat, [dx, dy], hatScale);
     };
     tick();
     const id = setInterval(tick, 80); // 초당 약 12번: 상시 실행이라 가볍게
     return () => clearInterval(id);
-  }, [character, color, image, mood, cell, hat, dx, dy]);
+  }, [character, color, image, mood, cell, hat, dx, dy, hatScale]);
   return (
     <canvas
       ref={ref}

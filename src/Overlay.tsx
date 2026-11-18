@@ -23,6 +23,8 @@ import {
   PX_DEFAULT,
   PX_MAX,
   PX_MIN,
+  percentOf,
+  sanitizeChat,
   REPLIES,
   THROWABLES,
   buildRoster,
@@ -215,6 +217,7 @@ export function Overlay() {
     idleMin: away ? idleMin : 0, // 자리에 있을 땐 0으로 둬서 presence를 1분마다 다시 보내지 않는다
     hat: s.hat,
     hatOffset: s.hatOffset,
+    hatScale: s.hatScale,
     tag: s.tag,
     px: s.px,
     msg: s.statusMsg,
@@ -361,7 +364,8 @@ export function Overlay() {
     ch.on("presence", { event: "sync" }, () => setPeers(presenceToPeers(ch.presenceState<PeerState>() as Record<string, PeerState[]>, s.deviceId)))
       .on("presence", { event: "leave" }, () => loadRef.current()) // 누가 나가면 마지막 접속 시각을 새로 받아 온다
       .on("broadcast", { event: "chat" }, ({ payload }) => {
-        const c = payload as { sender_id: string; body: string };
+        const c = sanitizeChat(payload);
+        if (!c) return; // 모양이 이상한 채팅은 버린다 (그대로 그리면 화면 전체가 멈출 수 있다)
         const now = Date.now();
         const alert = { on: notifyRef.current.chat, busy: busyRef.current, quiet: quietRef.current, mine: c.sender_id === s.deviceId, lastAt: chatNotifiedAt.current.get(c.sender_id) };
         if (shouldNotifyChat(alert, now)) {
@@ -1153,7 +1157,13 @@ export function Overlay() {
             onMouseMove={p.online ? (e) => onPetHover(p.id, e) : undefined}
           >
             {picker === p.id ? (
-              <div className="picker" data-hit role="toolbar" aria-label={`${p.name}에게 이모티콘 보내기, 던지기`}>
+              <div
+                className="picker"
+                data-hit
+                role="toolbar"
+                aria-label={`${p.name}에게 이모티콘 보내기, 던지기`}
+                style={{ "--s": scale } as React.CSSProperties} /* 친구 크기를 바꿔도 메뉴는 내 크기 그대로 */
+              >
                 {EMOTES.map((emoji) => (
                   <button
                     key={emoji}
@@ -1231,23 +1241,21 @@ export function Overlay() {
                 >
                   🎁
                 </button>
-                <span className="reply-label">크기 (내 화면에서만)</span>
-                <button
-                  className="wide"
-                  aria-label={`${p.name} 펫 작게`}
-                  disabled={p.px <= PX_MIN}
-                  onClick={() => saveSettings({ friendPx: { ...s.friendPx, [p.id]: Math.max(PX_MIN, p.px - 1) } })}
-                >
-                  −
-                </button>
-                <button
-                  className="wide"
-                  aria-label={`${p.name} 펫 크게`}
-                  disabled={p.px >= PX_MAX}
-                  onClick={() => saveSettings({ friendPx: { ...s.friendPx, [p.id]: Math.min(PX_MAX, p.px + 1) } })}
-                >
-                  ＋
-                </button>
+                <label className="friend-size">
+                  <span>
+                    크기 <output>{percentOf(p.px)}%</output> <span className="muted">· 내 화면에서만</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={PX_MIN}
+                    max={PX_MAX}
+                    step={1}
+                    value={p.px}
+                    aria-label={`${p.name} 펫 크기`}
+                    aria-valuetext={`${percentOf(p.px)}%`}
+                    onChange={(e) => saveSettings({ friendPx: { ...s.friendPx, [p.id]: Number(e.target.value) } })}
+                  />
+                </label>
                 <button
                   className="wide full"
                   aria-label={`${p.name} 펫 숨기기`}
@@ -1449,6 +1457,7 @@ function PetSlot({
           walk={walk}
           hat={hat}
           hatOffset={peer.hatOffset}
+          hatScale={peer.hatScale}
         />
         {gift && (
           <button

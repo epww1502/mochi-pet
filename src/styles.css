@@ -1251,3 +1251,273 @@ html[data-view="settings"] body {
 ::-webkit-scrollbar-button {
   display: none;
 }
+
+/* ---------- 친구 펫 크기 슬라이더 (친구 메뉴 안) ---------- */
+.friend-size {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(2px * var(--s));
+  padding: calc(4px * var(--s)) calc(6px * var(--s));
+  border-radius: 6px;
+  background: var(--soft);
+  font-size: max(10px, calc(11px * var(--s)));
+  font-weight: 600;
+  white-space: nowrap;
+}
+.friend-size .muted {
+  font-weight: 400;
+  opacity: 0.7;
+}
+.friend-size input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent, #f29a6b);
+  cursor: pointer;
+}
+
+/* ================= 설정 창: 위에 미리보기+탭, 아래 카드 ================= */
+.settings {
+  padding: 0 16px 20px;
+}
+
+.settings-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 -16px 12px;
+  padding: 12px 16px 0;
+  background: var(--soft);
+  border-bottom: 1px solid #e6dcd2;
+}
+
+.profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.profile-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.profile-text b {
+  font-size: 16px;
+}
+.profile-text .muted {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-wrap {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* 모자 조절 중엔 미리보기를 가운데 크게 두고 이름은 감춘다 */
+.preview-wrap.editing {
+  flex: 1;
+}
+.profile:has(.preview-wrap.editing) .profile-text {
+  display: none;
+}
+.settings .preview {
+  margin: 0;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--paper);
+}
+.settings .preview.hat-editing {
+  padding: 8px 16px;
+}
+.hat-edit-bar {
+  margin: 8px 0 4px;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-top: 10px;
+}
+.settings .tabs button {
+  flex: 1;
+  padding: 8px 4px 9px;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: #8a7d72;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 3px solid transparent;
+}
+.settings .tabs button:hover {
+  color: var(--ink);
+}
+.settings .tabs button.on {
+  color: var(--ink);
+  border-bottom-color: var(--line);
+}
+
+.settings section {
+  padding: 14px 14px 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgb(91 58 41 / 0.08);
+}
+.settings h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+.settings h2 output {
+  font-size: 13px;
+  font-weight: 400;
+}
+.settings .label {
+  margin: 12px 0 6px;
+}
+.settings .inline {
+  margin-top: 0;
+}
+
+.hint {
+  display: block;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #8a7d72;
+  font-weight: 400;
+}
+.hint.top {
+  margin: -4px 0 6px;
+}
+.hint.legend {
+  margin-top: 8px;
+}
+
+/* 켜기/끄기 한 줄 */
+.settings label.toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 9px 0;
+  font-weight: 400;
+  cursor: pointer;
+}
+.settings label.toggle + label.toggle {
+  border-top: 1px solid var(--soft);
+}
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.toggle-text b {
+  font-size: 13px;
+}
+.toggle-text .muted {
+  font-size: 12px;
+}
+.settings .toggle-text input.time {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 4px 8px;
+}
+.settings input[role="switch"] {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: 11px;
+  background: #d8cfc6;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.settings input[role="switch"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  transition: transform 0.15s;
+}
+.settings input[role="switch"]:checked {
+  background: var(--accent);
+}
+.settings input[role="switch"]:checked::after {
+  transform: translateX(16px);
+}
+.settings input[role="switch"]:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.settings input[role="switch"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings input[role="switch"],
+  .settings input[role="switch"]::after {
+    transition: none;
+  }
+}
+
+/* 붙어 있는 고르기 버튼 */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 9px;
+  background: var(--soft);
+}
+.settings .segmented button {
+  padding: 5px 14px;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a7d72;
+  font-weight: 600;
+}
+.settings .segmented button.on {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}
+
+.settings button.edit-hat {
+  margin-top: 10px;
+}
+
+.settings label.field {
+  margin: 10px 0 0;
+}
+.settings label.field select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.room-line {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.settings section.quit {
+  background: transparent;
+  box-shadow: none;
+  padding: 4px 0;
+}

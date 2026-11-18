@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
-import { CHARACTERS, COLORS, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset } from "./sprites";
+import { CHARACTERS, COLORS, HAT_SCALES, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset, type HatScale } from "./sprites";
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
 import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
@@ -58,448 +58,503 @@ export function Settings() {
   }
 
   const trimmed = name.trim();
+  const [tab, setTab] = useState<TabId>(loadTab);
+  const pick = (t: TabId) => {
+    setTab(t);
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {
+      /* 저장 못 해도 지금 탭은 바뀐다 */
+    }
+  };
+
   return (
     <main className="settings">
-      <h1>펫 설정</h1>
-
-      <section>
-        <h2>내 펫</h2>
-        <PreviewWithHatDrag s={s} editing={hatEdit} setEditing={setHatEdit} />
-        <label>
-          닉네임
-          <div className="inline">
-            <input value={name} maxLength={20} placeholder="친구들에게 보일 이름" onChange={(e) => setName(e.target.value)} />
-            <button disabled={!trimmed || trimmed === s.name} onClick={() => saveSettings({ name: trimmed })}>
-              저장
-            </button>
+      <header className="settings-head">
+        <div className="profile">
+          <PreviewWithHatDrag s={s} editing={hatEdit} setEditing={setHatEdit} />
+          <div className="profile-text">
+            <b>{s.name || "이름 없음"}</b>
+            <span className="muted">{s.room ? `🏠 ${s.room.name}` : "아직 방에 안 들어갔어요"}</span>
+            {s.statusMsg && <span className="muted">💬 {s.statusMsg}</span>}
           </div>
-        </label>
-        <div className="label">캐릭터</div>
-        <div className="choices">
-          {(Object.keys(CHARACTERS) as CharacterId[]).map((id) => (
-            <button
-              key={id}
-              className={`choice${!s.image && s.character === id ? " on" : ""}`}
-              onClick={() => saveSettings({ character: id, image: null, ...(s.image || s.character !== id ? { hatOffset: [0, 0] } : {}) })}
-              aria-pressed={!s.image && s.character === id}
-            >
-              <PetCanvas character={id} color={s.color} mood="idle" px={3} />
-              <span>{CHARACTERS[id].name}</span>
+        </div>
+        <nav className="tabs" role="tablist" aria-label="설정 메뉴">
+          {TABS.map(([id, icon, label]) => (
+            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => pick(id)}>
+              <span aria-hidden>{icon}</span> {label}
             </button>
           ))}
-          <label className={`choice upload${s.image ? " on" : ""}`}>
-            {s.image ? <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={3} /> : <span className="plus">+</span>}
-            <span>{s.image ? "내 그림" : "그림 가져오기"}</span>
-            <input
-              type="file"
-              accept="image/png,image/gif,image/jpeg,image/webp"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (!file) return;
-                setMsg(null);
-                try {
-                  saveSettings({ image: await importImage(file), hatOffset: [0, 0] }); // 머리 위치가 달라지니 모자도 제자리로
-                } catch {
-                  setMsg("그림을 읽지 못했어요. PNG나 JPG 파일로 다시 해 주세요.");
-                }
-              }}
-            />
-          </label>
-        </div>
-        <p className="muted small-left">큰 그림은 64x64 픽셀로 줄어들고, 친구에게도 보여요. 배경이 투명한 PNG 픽셀아트가 제일 잘 어울려요.</p>
-        <label className="size">
-          <span>
-            내 펫 크기 <output>{percentOf(s.px)}%</output> <span className="muted">· 친구 화면에도 이 크기로 보여요</span>
-          </span>
-          <div className="inline">
-            <input
-              type="range"
-              min={PX_MIN}
-              max={PX_MAX}
-              step={1}
-              value={s.px}
-              aria-valuetext={`${percentOf(s.px)}%`}
-              onChange={(e) => saveSettings({ px: Number(e.target.value) })}
-            />
-            <button className="ghost" disabled={s.px === PX_DEFAULT} onClick={() => saveSettings({ px: PX_DEFAULT })}>
-              100%
-            </button>
-          </div>
-        </label>
-        <div className="label">이름표 위치</div>
-        <div className="choices" role="radiogroup" aria-label="이름표 위치">
-          {(
-            [
-              ["above", "머리 위"],
-              ["below", "발 아래"],
-            ] as const
-          ).map(([pos, label]) => (
-            <button key={pos} className={`pill${s.labelPos === pos ? " on" : ""}`} role="radio" aria-checked={s.labelPos === pos} onClick={() => saveSettings({ labelPos: pos })}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="label">색</div>
-        <div className="choices">
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              className={`swatch${s.color === c ? " on" : ""}`}
-              style={{ background: c }}
-              aria-label={`색 ${c}`}
-              aria-pressed={s.color === c}
-              onClick={() => saveSettings({ color: c })}
-            />
-          ))}
-        </div>
-      </section>
+        </nav>
+      </header>
 
-      <section>
-        <h2>꾸미기</h2>
-        <div className="label">모자</div>
-        <div className="choices" role="radiogroup" aria-label="모자">
-          <button className={`pill${s.hat ? "" : " on"}`} role="radio" aria-checked={!s.hat} onClick={() => saveSettings({ hat: null })}>
-            없음
-          </button>
-          {(available(HATS, s.seasons) as HatId[]).map((id) => (
-            <button key={id} className={`pill${s.hat === id ? " on" : ""}`} role="radio" aria-checked={s.hat === id} onClick={() => saveSettings({ hat: id })}>
-              {HATS[id].icon} {HATS[id].name}
-            </button>
-          ))}
-        </div>
-        {s.hat && (
-          <p className="muted small-left hat-hint">
-            모자가 머리에 잘 안 맞으면 위치를 옮길 수 있어요
-            <button
-              className="pill"
-              onClick={() => {
-                setHatEdit(true);
-                document.querySelector(".preview")?.scrollIntoView({ behavior: "smooth", block: "center" });
-              }}
-            >
-              ✏️ 위치 수정
-            </button>
-          </p>
-        )}
-        <div className="label">이름표</div>
-        <div className="choices" role="radiogroup" aria-label="이름표 꾸미기">
-          <button className={`pill${s.tag ? "" : " on"}`} role="radio" aria-checked={!s.tag} onClick={() => saveSettings({ tag: null })}>
-            기본
-          </button>
-          {(available(TAGS, s.seasons) as TagId[]).map((id) => (
-            <button key={id} className={`pill${s.tag === id ? " on" : ""}`} role="radio" aria-checked={s.tag === id} onClick={() => saveSettings({ tag: id })}>
-              {TAGS[id].icon} {TAGS[id].name}
-            </button>
-          ))}
-        </div>
-        <p className="muted small-left">친구가 보낸 선물 상자를 열면 랜덤 모자가 나와요. 꾸미기는 친구 화면에도 보여요.</p>
-      </section>
-
-      <section>
-        <h2>계절 꾸미기</h2>
-        <p className="muted small-left">켜고 싶은 계절만 골라요. 켜면 그 계절 모자·이름표가 생기고 화면에 계절 효과가 보여요. 내 화면에만 적용돼요.</p>
-        {SEASON_IDS.map((id) => (
-          <label key={id} className="check">
-            <input
-              type="checkbox"
-              checked={s.seasons.includes(id)}
-              onChange={(e) =>
-                saveSettings({
-                  seasons: e.target.checked ? [...s.seasons, id] : s.seasons.filter((x) => x !== id),
-                  // 계절을 끄면 그 계절 모자·이름표도 벗는다
-                  ...(!e.target.checked && s.hat && HATS[s.hat].season === id ? { hat: null } : {}),
-                  ...(!e.target.checked && s.tag && TAGS[s.tag].season === id ? { tag: null } : {}),
-                })
-              }
-            />
-            <span>
-              <b>
-                {SEASONS[id].icon} {SEASONS[id].name}
-              </b>
-              <br />
-              <span className="muted">{SEASONS[id].desc}</span>
-            </span>
-          </label>
-        ))}
-        {s.seasons.includes("winter") && s.room && (
-          <button
-            className="ghost"
-            onClick={async () => {
-              if (!confirm("방 트리의 장식을 모두 떼요. 친구들 트리도 같이 비워져요. 계속할까요?")) return;
-              await supabase.rpc("clear_tree", { p_room: s.room!.id });
-            }}
-          >
-            🎄 트리 비우기
-          </button>
-        )}
-      </section>
-
-      <section>
-        <h2>날씨</h2>
-        <label className="check">
-          <input type="checkbox" checked={s.weatherOn} onChange={(e) => saveSettings({ weatherOn: e.target.checked })} />
-          <span>
-            <b>실제 날씨 보여주기</b>
-            <br />
-            <span className="muted">비가 오면 비, 구름이 끼면 구름, 맑으면 해(밤엔 별)가 펫 창에 보여요. 30분마다 새로 받아요.</span>
-          </span>
-        </label>
-        {s.weatherOn && (
-          <>
-            <div className="label">
-              도시 {s.place ? `· ${s.place.name}` : "· 아직 안 골랐어요"}
-              {weather && (
-                <span className="muted">
-                  {" "}
-                  — 지금 {WEATHER_LABEL[weather.kind]} {weather.temp}°C
-                </span>
-              )}
-            </div>
-            <div className="choices">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.name}
-                  className={`pill${s.place?.name === p.name ? " on" : ""}`}
-                  aria-pressed={s.place?.name === p.name}
-                  onClick={() => saveSettings({ place: p })}
-                >
-                  {p.name}
-                </button>
-              ))}
-            </div>
-            <form
-              className="inline"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (!placeQ.trim()) return;
-                try {
-                  setFound(await searchPlaces(placeQ));
-                } catch {
-                  setFound([]);
-                }
-              }}
-            >
-              <input value={placeQ} maxLength={40} placeholder="다른 지역 검색 (예: 춘천시, Gangneung)" onChange={(e) => setPlaceQ(e.target.value)} />
-              <button type="submit">검색</button>
-            </form>
-            {found && (
-              <ul className="places">
-                {found.length === 0 && <li className="muted">못 찾았어요. "OO시"처럼 전체 이름이나 영어로 찾아보세요.</li>}
-                {found.map((p) => (
-                  <li key={`${p.lat},${p.lon}`}>
-                    <button
-                      className="ghost"
-                      onClick={() => {
-                        saveSettings({ place: { name: p.name, lat: p.lat, lon: p.lon } });
-                        setFound(null);
-                        setPlaceQ("");
-                      }}
-                    >
-                      {p.name} <span className="muted">{p.detail}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="muted small-left">고른 도시의 좌표만 날씨 서비스(Open-Meteo)에 보내요. 내 위치를 자동으로 찾지 않아요.</p>
-          </>
-        )}
-      </section>
-
-      <section>
-        <h2>내 상태</h2>
-        <label>
-          상태 메시지 <span className="muted">· 친구 화면에도 펫 위에 작게 보여요</span>
-          <div className="inline">
-            <input
-              value={msgDraft}
-              maxLength={MSG_MAX}
-              placeholder="예: 점심 먹는 중 🍜"
-              onChange={(e) => setMsgDraft(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && saveSettings({ statusMsg: cleanMsg(msgDraft) })}
-            />
-            <button disabled={cleanMsg(msgDraft) === s.statusMsg} onClick={() => saveSettings({ statusMsg: cleanMsg(msgDraft) })}>
-              저장
-            </button>
-            {s.statusMsg && (
-              <button
-                className="ghost"
-                onClick={() => {
-                  setMsgDraft("");
-                  saveSettings({ statusMsg: "" });
-                }}
-              >
-                지우기
-              </button>
-            )}
-          </div>
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={s.busy} onChange={(e) => saveSettings({ busy: e.target.checked })} />
-          <span>
-            <b>바쁨 (방해 금지)</b>
-            <br />
-            <span className="muted">친구에게 빨간 불로 보이고, 이모티콘을 받아도 답장 추천을 띄우지 않아요.</span>
-          </span>
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={s.quiet} onChange={(e) => saveSettings({ quiet: e.target.checked })} />
-          <span>
-            <b>조용히 모드</b>
-            <br />
-            <span className="muted">친구 채팅 말풍선을 띄우지 않아요. 내 펫 이름표 옆에 안 읽은 개수(💬)만 쌓이고, 아래 최근 대화에서 모아 볼 수 있어요.</span>
-          </span>
-        </label>
-        <p className="muted small-left">
-          🟢 온라인 · 🟠 자리 비움(5분) / 잠수(30분~) · 🔴 바쁨 · ⚪ 오프라인. 자리 비움은 키보드와 마우스 입력으로 판단해요.
-        </p>
-      </section>
-
-      <BehaviorSection s={s} />
-
-      <EventSection s={s} />
-
-      <section>
-        <h2>알림</h2>
-        <NotifyToggle
-          on={s.notifyChat}
-          onChange={(v) => saveSettings({ notifyChat: v })}
-          title="채팅 알림"
-          desc="친구 채팅이 오면 컴퓨터 알림을 띄워요. 바쁨·조용히 모드일 땐 울리지 않아요."
-        />
-        <NotifyToggle
-          on={s.notifyOnline}
-          onChange={(v) => saveSettings({ notifyOnline: v })}
-          title="친구 접속 알림"
-          desc="친구가 앱을 켜면 알려 줘요. 잠깐 끊겼다 다시 붙은 건 알리지 않아요. 바쁨일 땐 울리지 않아요."
-        />
-      </section>
-
-      <section>
-        <h2>방</h2>
-        {s.room ? (
-          <>
-            <p>
-              <b>{s.room.name}</b>에 있어요. 친구에게 초대 코드를 알려주세요.
-            </p>
+      {tab === "pet" && (
+        <>
+          <section>
+            <h2>이름</h2>
             <div className="inline">
-              <code className="code">{s.room.code}</code>
-              <button
-                onClick={async () => {
-                  await navigator.clipboard.writeText(s.room!.code);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                }}
-              >
-                {copied ? "복사됨" : "복사"}
-              </button>
-              <button
-                className="ghost"
-                onClick={async () => {
-                  // 친구들 화면에서 내 회색 펫도 지운다 (실패해도 나가기는 한다)
-                  await supabase.rpc("leave_room", { p_room: s.room!.id, p_device: s.deviceId });
-                  saveSettings({ room: null });
-                }}
-              >
-                나가기
+              <input
+                aria-label="닉네임"
+                value={name}
+                maxLength={20}
+                placeholder="친구들에게 보일 이름"
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && trimmed && saveSettings({ name: trimmed })}
+              />
+              <button disabled={!trimmed || trimmed === s.name} onClick={() => saveSettings({ name: trimmed })}>
+                저장
               </button>
             </div>
-          </>
-        ) : (
-          <>
-            <label>
-              초대 코드로 들어가기
-              <div className="inline">
-                <input value={code} maxLength={6} placeholder="예: 26MMRA" onChange={(e) => setCode(e.target.value.toUpperCase())} />
-                <button disabled={code.trim().length !== 6} onClick={() => enter(supabase.rpc("join_room", { p_code: code }), "그런 코드의 방이 없어요")}>
-                  들어가기
-                </button>
-              </div>
-            </label>
-            <label>
-              새 방 만들기
-              <div className="inline">
-                <input value={roomName} maxLength={30} placeholder="방 이름 (비우면 '우리 방')" onChange={(e) => setRoomName(e.target.value)} />
-                <button onClick={() => enter(supabase.rpc("create_room", { p_name: roomName }), "방을 만들지 못했어요")}>만들기</button>
-              </div>
-            </label>
-          </>
-        )}
-        {msg && <p className="error">{msg}</p>}
-      </section>
+          </section>
 
-      {s.room && (
-        <section>
-          <h2>최근 대화</h2>
-          {history.length === 0 ? (
-            <p className="muted">아직 대화가 없어요. 펫을 클릭하면 말할 수 있어요.</p>
-          ) : (
-            <ul className="history" ref={historyRef}>
-              {history.map((m) => (
-                <li key={m.id}>
-                  <b>{m.sender_id === s.deviceId ? "나" : m.sender_name}</b> {m.body}
-                  <time>{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</time>
-                </li>
+          <section>
+            <h2>캐릭터</h2>
+            <div className="choices">
+              {(Object.keys(CHARACTERS) as CharacterId[]).map((id) => (
+                <button
+                  key={id}
+                  className={`choice${!s.image && s.character === id ? " on" : ""}`}
+                  onClick={() => saveSettings({ character: id, image: null, ...(s.image || s.character !== id ? { hatOffset: [0, 0] } : {}) })}
+                  aria-pressed={!s.image && s.character === id}
+                >
+                  <PetCanvas character={id} color={s.color} mood="idle" px={3} />
+                  <span>{CHARACTERS[id].name}</span>
+                </button>
               ))}
-            </ul>
-          )}
-        </section>
+              <label className={`choice upload${s.image ? " on" : ""}`} title="배경이 투명한 PNG 픽셀아트가 제일 잘 어울려요. 64x64로 줄어들어요.">
+                {s.image ? <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={3} /> : <span className="plus">+</span>}
+                <span>{s.image ? "내 그림" : "그림 가져오기"}</span>
+                <input
+                  type="file"
+                  accept="image/png,image/gif,image/jpeg,image/webp"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file) return;
+                    setMsg(null);
+                    try {
+                      saveSettings({ image: await importImage(file), hatOffset: [0, 0] }); // 머리 위치가 달라지니 모자도 제자리로
+                    } catch {
+                      setMsg("그림을 읽지 못했어요. PNG나 JPG 파일로 다시 해 주세요.");
+                    }
+                  }}
+                />
+              </label>
+            </div>
+            {msg && tab === "pet" && <p className="error">{msg}</p>}
+            {!s.image && (
+              <>
+                <div className="label">색</div>
+                <div className="choices">
+                  {COLORS.map((c) => (
+                    <button
+                      key={c}
+                      className={`swatch${s.color === c ? " on" : ""}`}
+                      style={{ background: c }}
+                      aria-label={`색 ${c}`}
+                      aria-pressed={s.color === c}
+                      onClick={() => saveSettings({ color: c })}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+
+          <section>
+            <h2>
+              크기 <output className="muted">{percentOf(s.px)}%</output>
+            </h2>
+            <div className="inline">
+              <input
+                type="range"
+                aria-label="내 펫 크기"
+                min={PX_MIN}
+                max={PX_MAX}
+                step={1}
+                value={s.px}
+                aria-valuetext={`${percentOf(s.px)}%`}
+                onChange={(e) => saveSettings({ px: Number(e.target.value) })}
+              />
+              <button className="ghost" disabled={s.px === PX_DEFAULT} onClick={() => saveSettings({ px: PX_DEFAULT })}>
+                100%
+              </button>
+            </div>
+            <p className="hint">친구 화면에도 이 크기로 보여요</p>
+            <div className="label">이름표 위치</div>
+            <Segmented
+              label="이름표 위치"
+              value={s.labelPos}
+              options={[
+                ["above", "머리 위"],
+                ["below", "발 아래"],
+              ]}
+              onChange={(v) => saveSettings({ labelPos: v })}
+            />
+          </section>
+        </>
       )}
 
-      <section className="quit">
-        <button className="ghost" onClick={() => invoke("quit_app")}>
-          펫 종료
-        </button>
-        <span className="muted">메뉴 막대의 쿼카 아이콘이나 펫 오른쪽 클릭으로도 끌 수 있어요</span>
-      </section>
+      {tab === "decor" && (
+        <>
+          <section>
+            <h2>모자</h2>
+            <div className="choices" role="radiogroup" aria-label="모자">
+              <button className={`pill${s.hat ? "" : " on"}`} role="radio" aria-checked={!s.hat} onClick={() => saveSettings({ hat: null })}>
+                없음
+              </button>
+              {(available(HATS, s.seasons) as HatId[]).map((id) => (
+                <button key={id} className={`pill${s.hat === id ? " on" : ""}`} role="radio" aria-checked={s.hat === id} onClick={() => saveSettings({ hat: id })}>
+                  {HATS[id].icon} {HATS[id].name}
+                </button>
+              ))}
+            </div>
+            {s.hat && !hatEdit && (
+              <button className="ghost edit-hat" onClick={() => setHatEdit(true)}>
+                ✏️ 모자 위치·크기 조절
+              </button>
+            )}
+            <p className="hint">친구가 보낸 선물 상자를 열면 랜덤 모자가 나와요</p>
+          </section>
 
-      <p className="muted small">펫 클릭: 채팅 · 끌기: 옮기기 · 오른쪽 클릭: 설정·종료 메뉴</p>
+          <section>
+            <h2>이름표</h2>
+            <div className="choices" role="radiogroup" aria-label="이름표 꾸미기">
+              <button className={`pill${s.tag ? "" : " on"}`} role="radio" aria-checked={!s.tag} onClick={() => saveSettings({ tag: null })}>
+                기본
+              </button>
+              {(available(TAGS, s.seasons) as TagId[]).map((id) => (
+                <button key={id} className={`pill${s.tag === id ? " on" : ""}`} role="radio" aria-checked={s.tag === id} onClick={() => saveSettings({ tag: id })}>
+                  {TAGS[id].icon} {TAGS[id].name}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h2>계절</h2>
+            <p className="hint top">켜면 그 계절 모자·이름표가 생기고 화면에 계절 효과가 보여요 (내 화면만)</p>
+            {SEASON_IDS.map((id) => (
+              <Toggle
+                key={id}
+                title={`${SEASONS[id].icon} ${SEASONS[id].name}`}
+                desc={SEASONS[id].desc}
+                checked={s.seasons.includes(id)}
+                onChange={(on) =>
+                  saveSettings({
+                    seasons: on ? [...s.seasons, id] : s.seasons.filter((x) => x !== id),
+                    // 계절을 끄면 그 계절 모자·이름표도 벗는다
+                    ...(!on && s.hat && HATS[s.hat].season === id ? { hat: null } : {}),
+                    ...(!on && s.tag && TAGS[s.tag].season === id ? { tag: null } : {}),
+                  })
+                }
+              />
+            ))}
+            {s.seasons.includes("winter") && s.room && (
+              <button
+                className="ghost"
+                onClick={async () => {
+                  if (!confirm("방 트리의 장식을 모두 떼요. 친구들 트리도 같이 비워져요. 계속할까요?")) return;
+                  await supabase.rpc("clear_tree", { p_room: s.room!.id });
+                }}
+              >
+                🎄 트리 비우기
+              </button>
+            )}
+          </section>
+
+          <section>
+            <h2>날씨</h2>
+            <Toggle
+              title="실제 날씨 보여주기"
+              desc={weather ? `지금 ${s.place?.name ?? ""} ${WEATHER_LABEL[weather.kind]} ${weather.temp}°C` : "비·구름·해(밤엔 별)가 펫 창에 보여요"}
+              checked={s.weatherOn}
+              onChange={(on) => saveSettings({ weatherOn: on })}
+            />
+            {s.weatherOn && (
+              <>
+                <div className="label">도시 {s.place ? `· ${s.place.name}` : "· 골라 주세요"}</div>
+                <div className="choices">
+                  {PRESETS.map((p) => (
+                    <button
+                      key={p.name}
+                      className={`pill${s.place?.name === p.name ? " on" : ""}`}
+                      aria-pressed={s.place?.name === p.name}
+                      onClick={() => saveSettings({ place: p })}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+                <form
+                  className="inline"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!placeQ.trim()) return;
+                    try {
+                      setFound(await searchPlaces(placeQ));
+                    } catch {
+                      setFound([]);
+                    }
+                  }}
+                >
+                  <input value={placeQ} maxLength={40} placeholder="다른 지역 (예: 춘천시)" onChange={(e) => setPlaceQ(e.target.value)} />
+                  <button type="submit">검색</button>
+                </form>
+                {found && (
+                  <ul className="places">
+                    {found.length === 0 && <li className="muted">못 찾았어요. "OO시"처럼 전체 이름이나 영어로 찾아보세요.</li>}
+                    {found.map((p) => (
+                      <li key={`${p.lat},${p.lon}`}>
+                        <button
+                          className="ghost"
+                          onClick={() => {
+                            saveSettings({ place: { name: p.name, lat: p.lat, lon: p.lon } });
+                            setFound(null);
+                            setPlaceQ("");
+                          }}
+                        >
+                          {p.name} <span className="muted">{p.detail}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="hint">고른 도시 좌표만 날씨 서비스에 보내요. 내 위치는 찾지 않아요.</p>
+              </>
+            )}
+          </section>
+        </>
+      )}
+
+      {tab === "friends" && (
+        <>
+          <section>
+            <h2>방</h2>
+            {s.room ? (
+              <>
+                <p className="room-line">
+                  <b>{s.room.name}</b> <span className="muted">· 초대 코드를 친구에게 알려 주세요</span>
+                </p>
+                <div className="inline">
+                  <code className="code">{s.room.code}</code>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(s.room!.code);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                  >
+                    {copied ? "복사됨" : "복사"}
+                  </button>
+                  <button
+                    className="ghost"
+                    onClick={async () => {
+                      if (!confirm(`'${s.room!.name}' 방에서 나갈까요?`)) return;
+                      // 친구들 화면에서 내 회색 펫도 지운다 (실패해도 나가기는 한다)
+                      await supabase.rpc("leave_room", { p_room: s.room!.id, p_device: s.deviceId });
+                      saveSettings({ room: null });
+                    }}
+                  >
+                    나가기
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="label">초대 코드로 들어가기</div>
+                <div className="inline">
+                  <input aria-label="초대 코드" value={code} maxLength={6} placeholder="예: 26MMRA" onChange={(e) => setCode(e.target.value.toUpperCase())} />
+                  <button disabled={code.trim().length !== 6} onClick={() => enter(supabase.rpc("join_room", { p_code: code }), "그런 코드의 방이 없어요")}>
+                    들어가기
+                  </button>
+                </div>
+                <div className="label">새 방 만들기</div>
+                <div className="inline">
+                  <input aria-label="방 이름" value={roomName} maxLength={30} placeholder="방 이름 (비우면 '우리 방')" onChange={(e) => setRoomName(e.target.value)} />
+                  <button onClick={() => enter(supabase.rpc("create_room", { p_name: roomName }), "방을 만들지 못했어요")}>만들기</button>
+                </div>
+              </>
+            )}
+            {msg && tab === "friends" && <p className="error">{msg}</p>}
+          </section>
+
+          <section>
+            <h2>내 상태</h2>
+            <div className="inline">
+              <input
+                aria-label="상태 메시지"
+                value={msgDraft}
+                maxLength={MSG_MAX}
+                placeholder="상태 메시지 (예: 점심 먹는 중 🍜)"
+                onChange={(e) => setMsgDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && saveSettings({ statusMsg: cleanMsg(msgDraft) })}
+              />
+              <button disabled={cleanMsg(msgDraft) === s.statusMsg} onClick={() => saveSettings({ statusMsg: cleanMsg(msgDraft) })}>
+                저장
+              </button>
+              {s.statusMsg && (
+                <button
+                  className="ghost"
+                  onClick={() => {
+                    setMsgDraft("");
+                    saveSettings({ statusMsg: "" });
+                  }}
+                >
+                  지우기
+                </button>
+              )}
+            </div>
+            <p className="hint">친구 화면에서 펫 위에 작게 보여요</p>
+            <Toggle title="🔴 바쁨 (방해 금지)" desc="친구에게 빨간 불로 보이고, 답장 추천을 띄우지 않아요" checked={s.busy} onChange={(on) => saveSettings({ busy: on })} />
+            <Toggle title="🤫 조용히 모드" desc="채팅 말풍선 대신 이름표 옆에 안 읽은 개수만 보여요" checked={s.quiet} onChange={(on) => saveSettings({ quiet: on })} />
+            <p className="hint legend">🟢 온라인 · 🟠 자리 비움 · 🔴 바쁨 · ⚪ 오프라인</p>
+          </section>
+
+          {s.room && (
+            <section>
+              <h2>최근 대화</h2>
+              {history.length === 0 ? (
+                <p className="muted">아직 대화가 없어요. 펫을 클릭하면 말할 수 있어요.</p>
+              ) : (
+                <ul className="history" ref={historyRef}>
+                  {history.map((m) => (
+                    <li key={m.id}>
+                      <b>{m.sender_id === s.deviceId ? "나" : m.sender_name}</b> {m.body}
+                      <time>{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</time>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+        </>
+      )}
+
+      {tab === "app" && (
+        <>
+          <BehaviorSection s={s} />
+          <section>
+            <h2>알림</h2>
+            <NotifyToggle on={s.notifyChat} onChange={(v) => saveSettings({ notifyChat: v })} title="채팅 알림" desc="친구 채팅이 오면 알려 줘요 (바쁨·조용히 땐 안 울려요)" />
+            <NotifyToggle on={s.notifyOnline} onChange={(v) => saveSettings({ notifyOnline: v })} title="친구 접속 알림" desc="친구가 앱을 켜면 알려 줘요" />
+          </section>
+          <EventSection s={s} />
+          <section className="quit">
+            <button className="ghost" onClick={() => invoke("quit_app")}>
+              펫 종료
+            </button>
+            <span className="hint">펫 클릭: 채팅 · 끌기: 옮기기 · 오른쪽 클릭: 메뉴</span>
+          </section>
+        </>
+      )}
     </main>
   );
 }
 
-const PREVIEW_PX = 6; // 미리보기 한 칸 = 화면 6px
+type TabId = "pet" | "decor" | "friends" | "app";
+const TABS: [TabId, string, string][] = [
+  ["pet", "🐾", "내 펫"],
+  ["decor", "🎩", "꾸미기"],
+  ["friends", "💬", "친구"],
+  ["app", "⚙️", "앱 설정"],
+];
+const TAB_KEY = "mochi-pet-settings-tab";
+function loadTab(): TabId {
+  try {
+    const t = localStorage.getItem(TAB_KEY);
+    if (TABS.some(([id]) => id === t)) return t as TabId;
+  } catch {
+    /* 못 읽으면 첫 탭 */
+  }
+  return "pet";
+}
+
+/** 켜기/끄기 한 줄: 왼쪽에 제목과 짧은 설명, 오른쪽에 스위치 */
+function Toggle({
+  title,
+  desc,
+  checked,
+  disabled,
+  onChange,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (on: boolean) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <label className="toggle">
+      <span className="toggle-text">
+        <b>{title}</b>
+        {desc && <span className="muted">{desc}</span>}
+        {children}
+      </span>
+      <input type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+/** 둘 이상 중 하나 고르기 (붙어 있는 버튼) */
+function Segmented<T extends string | number>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <div className="segmented" role="radiogroup" aria-label={label}>
+      {options.map(([v, text]) => (
+        <button key={String(v)} role="radio" aria-checked={value === v} className={value === v ? "on" : ""} onClick={() => onChange(v)}>
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const PREVIEW_PX = 5; // 미리보기 한 칸 = 화면 5px
 
 /**
- * 설정 맨 위 미리보기 + 모자 위치 수정.
- * "모자 위치 수정"을 누르면 미리보기에서 모자를 끌어(또는 방향키로) 옮겨 볼 수 있고, 저장을 눌러야 바뀐다.
- * 그래서 수정하는 동안은 친구에게 아무것도 보내지 않고, 취소하면 그대로다.
+ * 설정 맨 위 미리보기 + 모자 위치·크기 조절.
+ * "모자 위치·크기 조절"을 누르면 미리보기에서 모자를 끌어(또는 방향키로) 옮기고 크기를 골라 볼 수 있고, 저장을 눌러야 바뀐다.
+ * 그래서 고치는 동안은 친구에게 아무것도 보내지 않고, 취소하면 그대로다.
  */
 function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editing: boolean; setEditing: (v: boolean) => void }) {
   const [draft, setDraft] = useState<HatOffset>(s.hatOffset);
+  const [scaleDraft, setScaleDraft] = useState<HatScale>(s.hatScale);
   const [drag, setDrag] = useState<{ x0: number; y0: number; from: HatOffset } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
-  // 수정을 시작할 때마다 지금 저장된 자리에서 시작하고, 방향키를 바로 쓸 수 있게 포커스
+  // 고치기 시작할 때마다 지금 저장된 모자에서 시작하고, 방향키를 바로 쓸 수 있게 포커스
   useEffect(() => {
     if (!editing) return;
     setDraft(s.hatOffset);
+    setScaleDraft(s.hatScale);
     boxRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
-  // 모자를 벗으면 수정도 끝
+  // 모자를 벗으면 고치기도 끝
   useEffect(() => {
     if (!s.hat) setEditing(false);
   }, [s.hat, setEditing]);
 
   const fit = (v: [number, number]) => cleanHatOffset(v, hatDyMin(s.character, !!s.image));
   const offset = editing ? draft : s.hatOffset;
-  const changed = draft[0] !== s.hatOffset[0] || draft[1] !== s.hatOffset[1];
-  const atHome = draft[0] === 0 && draft[1] === 0;
+  const hatScale = editing ? scaleDraft : s.hatScale;
+  const changed = draft[0] !== s.hatOffset[0] || draft[1] !== s.hatOffset[1] || scaleDraft !== s.hatScale;
+  const atHome = draft[0] === 0 && draft[1] === 0 && scaleDraft === 1;
   const save = () => {
-    saveSettings({ hatOffset: draft });
+    saveSettings({ hatOffset: draft, hatScale: scaleDraft });
     setEditing(false);
   };
   const cancel = () => setEditing(false);
 
   return (
-    <>
+    <div className={`preview-wrap${editing ? " editing" : ""}`}>
       <div
         ref={boxRef}
         className={`preview${editing ? " hat-editing" : ""}${drag ? " dragging" : ""}`}
         tabIndex={editing ? 0 : undefined}
         role={editing ? "application" : undefined}
-        aria-label={editing ? "모자 위치 수정: 끌거나 방향키로 옮기고 Enter로 저장, Esc로 취소" : undefined}
+        aria-label={editing ? "모자 조절: 끌거나 방향키로 옮기고 Enter로 저장, Esc로 취소" : undefined}
         onPointerDown={(e) => {
           if (!editing || e.button !== 0) return;
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -521,14 +576,20 @@ function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editin
           setDraft((d) => fit([d[0] + step[0], d[1] + step[1]]));
         }}
       >
-        <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={offset} />
+        <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={offset} hatScale={hatScale} />
       </div>
-      {editing ? (
-        <div className="hat-edit-bar" role="group" aria-label="모자 위치 수정">
-          <span className="muted">모자를 끌어서 옮겨요 · 방향키로 한 칸씩</span>
+      {editing && (
+        <div className="hat-edit-bar" role="group" aria-label="모자 위치·크기 조절">
+          <span className="hint">모자를 끌어서 옮겨요 · 방향키로 한 칸씩</span>
+          <Segmented
+            label="모자 크기"
+            value={scaleDraft}
+            options={HAT_SCALES.map((v) => [v, v < 1 ? "작게" : v > 1 ? "크게" : "보통"])}
+            onChange={setScaleDraft}
+          />
           <div className="inline">
-            <button className="ghost" disabled={atHome} onClick={() => setDraft([0, 0])}>
-              제자리로
+            <button className="ghost" disabled={atHome} onClick={() => (setDraft([0, 0]), setScaleDraft(1))}>
+              처음대로
             </button>
             <button className="ghost" onClick={cancel}>
               취소
@@ -538,16 +599,8 @@ function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editin
             </button>
           </div>
         </div>
-      ) : (
-        s.hat && (
-          <div className="hat-edit-bar">
-            <button className="pill" onClick={() => setEditing(true)}>
-              ✏️ 모자 위치 수정
-            </button>
-          </div>
-        )
       )}
-    </>
+    </div>
   );
 }
 
@@ -555,29 +608,18 @@ function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editin
 function NotifyToggle({ on, onChange, title, desc }: { on: boolean; onChange: (v: boolean) => void; title: string; desc: string }) {
   const [denied, setDenied] = useState(false);
   return (
-    <label className="check">
-      <input
-        type="checkbox"
-        checked={on}
-        onChange={async (e) => {
-          const want = e.target.checked;
-          if (want && !(await askNotifyPermission())) return setDenied(true);
-          setDenied(false);
-          onChange(want);
-        }}
-      />
-      <span>
-        <b>{title}</b>
-        <br />
-        <span className="muted">{desc}</span>
-        {denied && (
-          <>
-            <br />
-            <span className="error-inline">알림 권한이 꺼져 있어요. 시스템 설정의 알림에서 mochi-pet을 허용해 주세요.</span>
-          </>
-        )}
-      </span>
-    </label>
+    <Toggle
+      title={title}
+      desc={desc}
+      checked={on}
+      onChange={async (want) => {
+        if (want && !(await askNotifyPermission())) return setDenied(true);
+        setDenied(false);
+        onChange(want);
+      }}
+    >
+      {denied && <span className="error-inline">알림 권한이 꺼져 있어요. 시스템 설정의 알림에서 mochi-pet을 허용해 주세요.</span>}
+    </Toggle>
   );
 }
 
@@ -612,38 +654,29 @@ function BehaviorSection({ s }: { s: PetSettings }) {
   return (
     <section>
       <h2>동작</h2>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={!!autostart}
-          disabled={autostart === null}
-          onChange={async (e) => {
-            const want = e.target.checked;
-            try {
-              const a = await import("@tauri-apps/plugin-autostart");
-              await (want ? a.enable() : a.disable());
-              setAutostart(await a.isEnabled());
-            } catch {
-              setAutostart(null);
-            }
-          }}
-        />
-        <span>
-          <b>컴퓨터 켤 때 자동으로 시작</b>
-          <br />
-          <span className="muted">재부팅해도 펫이 알아서 켜져서 친구 화면에 계속 보여요.</span>
-        </span>
-      </label>
-      <label className="check">
-        <input type="checkbox" checked={s.climb} onChange={(e) => saveSettings({ climb: e.target.checked })} />
-        <span>
-          <b>창 위로 올라가기</b>
-          <br />
-          <span className="muted">펫이 가끔 맨 앞 창 위 모서리로 올라가 걸어요. 끄면 화면 바닥에서만 다녀요. 창 위치만 읽고 내용은 읽지 않아요.</span>
-        </span>
-      </label>
+      <Toggle
+        title="컴퓨터 켤 때 자동으로 시작"
+        desc="재부팅해도 펫이 알아서 켜져요"
+        checked={!!autostart}
+        disabled={autostart === null}
+        onChange={async (want) => {
+          try {
+            const a = await import("@tauri-apps/plugin-autostart");
+            await (want ? a.enable() : a.disable());
+            setAutostart(await a.isEnabled());
+          } catch {
+            setAutostart(null);
+          }
+        }}
+      />
+      <Toggle
+        title="창 위로 올라가기"
+        desc="가끔 맨 앞 창 위 모서리로 올라가 걸어요. 창 위치만 읽어요."
+        checked={s.climb}
+        onChange={(on) => saveSettings({ climb: on })}
+      />
       {monitors.length > 1 || s.monitor ? (
-        <label>
+        <label className="field">
           펫이 있을 모니터
           <select value={s.monitor ?? ""} onChange={(e) => saveSettings({ monitor: e.target.value || null })}>
             <option value="">자동 (앱이 켜진 모니터)</option>
@@ -654,7 +687,7 @@ function BehaviorSection({ s }: { s: PetSettings }) {
             ))}
             {missing && <option value={s.monitor!}>연결 안 된 모니터</option>}
           </select>
-          {missing && <span className="muted">고른 모니터가 연결돼 있지 않아서 지금은 앱이 켜진 모니터에 있어요.</span>}
+          {missing && <span className="hint">고른 모니터가 연결돼 있지 않아서 지금은 앱이 켜진 모니터에 있어요.</span>}
         </label>
       ) : null}
     </section>
@@ -676,58 +709,44 @@ function EventSection({ s }: { s: PetSettings }) {
   return (
     <section>
       <h2>이벤트</h2>
-      <label>
-        생일 <span className="muted">· 그날 친구 화면에 🎂와 고깔모자가 보이고, 친구가 축하해 줄 수 있어요. 월·일만 방 친구에게 보여요.</span>
-        <div className="inline">
-          <select aria-label="생일 월" value={mo || ""} onChange={(e) => setBday(Number(e.target.value), da)}>
-            <option value="">월</option>
-            {Array.from({ length: 12 }, (_, i) => (
-              <option key={i + 1} value={i + 1}>
-                {i + 1}월
-              </option>
-            ))}
-          </select>
-          <select aria-label="생일 일" value={da || ""} disabled={!mo} onChange={(e) => setBday(mo, Number(e.target.value))}>
-            <option value="">일</option>
-            {Array.from({ length: mo ? [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1] : 31 }, (_, i) => (
-              <option key={i + 1} value={i + 1}>
-                {i + 1}일
-              </option>
-            ))}
-          </select>
-          {s.birthday && (
-            <button className="ghost" onClick={() => saveSettings({ birthday: "" })}>
-              지우기
-            </button>
-          )}
-        </div>
-      </label>
-      <label className="check">
-        <input type="checkbox" checked={s.offParty} onChange={(e) => saveSettings({ offParty: e.target.checked })} />
-        <span>
-          <b>퇴근 시간 파티</b>
-          <br />
-          <span className="muted">평일 이 시각에 펫들이 다 같이 만세해요. 금요일엔 "불금!"</span>
-        </span>
-      </label>
-      {s.offParty && (
-        <label>
-          퇴근 시각
-          <div className="inline">
-            <input type="time" value={s.offTime} onChange={(e) => /^\d\d:\d\d$/.test(e.target.value) && saveSettings({ offTime: e.target.value })} />
-          </div>
-        </label>
-      )}
-      <label className="check">
-        <input type="checkbox" checked={s.eventsOn} onChange={(e) => saveSettings({ eventsOn: e.target.checked })} />
-        <span>
-          <b>기념일 · 다 모였다</b>
-          <br />
-          <span className="muted">
-            기념일({holidays})에 인사하고 그날 간식이 생겨요. 방 친구(3명 이상)가 모두 접속하면 하루에 한 번 다 같이 만세해요.
-          </span>
-        </span>
-      </label>
+      <div className="label">생일</div>
+      <div className="inline">
+        <select aria-label="생일 월" value={mo || ""} onChange={(e) => setBday(Number(e.target.value), da)}>
+          <option value="">월</option>
+          {Array.from({ length: 12 }, (_, i) => (
+            <option key={i + 1} value={i + 1}>
+              {i + 1}월
+            </option>
+          ))}
+        </select>
+        <select aria-label="생일 일" value={da || ""} disabled={!mo} onChange={(e) => setBday(mo, Number(e.target.value))}>
+          <option value="">일</option>
+          {Array.from({ length: mo ? [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1] : 31 }, (_, i) => (
+            <option key={i + 1} value={i + 1}>
+              {i + 1}일
+            </option>
+          ))}
+        </select>
+        {s.birthday && (
+          <button className="ghost" onClick={() => saveSettings({ birthday: "" })}>
+            지우기
+          </button>
+        )}
+      </div>
+      <p className="hint">그날 친구 화면에 🎂와 고깔모자가 보여요 (월·일만 공유)</p>
+      <Toggle title="퇴근 시간 파티" desc='평일 이 시각에 다 같이 만세해요. 금요일엔 "불금!"' checked={s.offParty} onChange={(on) => saveSettings({ offParty: on })}>
+        {s.offParty && (
+          <input
+            type="time"
+            aria-label="퇴근 시각"
+            className="time"
+            value={s.offTime}
+            onChange={(e) => /^\d\d:\d\d$/.test(e.target.value) && saveSettings({ offTime: e.target.value })}
+          />
+        )}
+      </Toggle>
+      <Toggle title="기념일 · 다 모였다" desc="기념일에 인사하고 그날 간식이 생겨요. 방 친구가 모두 모이면 만세!" checked={s.eventsOn} onChange={(on) => saveSettings({ eventsOn: on })} />
+      <p className="hint">기념일: {holidays}</p>
     </section>
   );
 }

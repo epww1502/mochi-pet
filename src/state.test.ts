@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, cleanMsg, presenceToPeers, pxOf, safeImage, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, cleanMsg, presenceToPeers, pxOf, safeImage, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -13,6 +13,7 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   idleMin: 0,
   hat: null,
   hatOffset: [0, 0],
+  hatScale: 1,
   tag: null,
   px: 5,
   msg: "",
@@ -29,6 +30,16 @@ describe("presenceToPeers", () => {
       "me",
     );
     expect(peers.map((p) => p.hatOffset)).toEqual([[0, 0], [2, -1], [5, 0]]);
+  });
+
+  it("모자 크기는 정해진 단계만, 옛 버전이거나 이상한 값이면 원래 크기", () => {
+    const old = { ...peer("a", "가람") } as Partial<PeerState>;
+    delete old.hatScale;
+    const peers = presenceToPeers(
+      { a: [old as PeerState], b: [peer("b", "나래", { hatScale: 1.25 })], c: [peer("c", "다온", { hatScale: 9 as unknown as 1 })] },
+      "me",
+    );
+    expect(peers.map((p) => p.hatScale)).toEqual([1, 1.25, 1]);
   });
 
   it("친구가 정한 펫 크기를 쓰되, 범위 밖이면 맞춘다", () => {
@@ -114,8 +125,26 @@ describe("fitImage", () => {
     expect(fitImage(20, 10, 70)).toEqual({ w: 60, h: 30, smooth: false }); // 3배, 비율 유지
   });
 
+  it("정수배로는 많이 모자라면 box에 맞게 늘려서 크기를 바꾸면 그대로 커진다", () => {
+    // 64px 그림: 예전엔 box 84~126에서 모두 64로 같아 크기 조절이 안 먹었다
+    expect(fitImage(64, 64, 84)).toEqual({ w: 84, h: 84, smooth: false });
+    expect(fitImage(64, 32, 126)).toEqual({ w: 126, h: 63, smooth: false });
+    expect(fitImage(64, 64, 70)).toEqual({ w: 64, h: 64, smooth: false }); // 91%면 정수배 그대로
+  });
+
   it("칸보다 큰 그림은 비율을 지키며 부드럽게 줄인다", () => {
     expect(fitImage(64, 32, 56)).toEqual({ w: 56, h: 28, smooth: true });
+  });
+});
+
+describe("sanitizeChat", () => {
+  it("글자로 된 채팅만, 300자까지", () => {
+    expect(sanitizeChat({ sender_id: "a", body: " 안녕 " })).toEqual({ sender_id: "a", body: "안녕" });
+    expect(sanitizeChat({ sender_id: "a", body: {} })).toBeNull(); // 그대로 그리면 화면이 멈춘다
+    expect(sanitizeChat({ sender_id: 1, body: "x" })).toBeNull();
+    expect(sanitizeChat({ sender_id: "a", body: "   " })).toBeNull();
+    expect(sanitizeChat({ sender_id: "a", body: "가".repeat(5000) })?.body.length).toBe(300);
+    expect(sanitizeChat(null)).toBeNull();
   });
 });
 
