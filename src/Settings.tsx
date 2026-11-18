@@ -24,6 +24,7 @@ export function Settings() {
   const [placeQ, setPlaceQ] = useState("");
   const [found, setFound] = useState<(Place & { detail: string })[] | null>(null);
   const weather = useWeather(s.weatherOn, s.place);
+  const [hatEdit, setHatEdit] = useState(false);
   // 최근 대화는 맨 아래(가장 최근)가 보이게. 새 메시지가 오면 다시 아래로.
   const historyRef = useRef<HTMLUListElement>(null);
   const lastId = history[history.length - 1]?.id;
@@ -63,7 +64,7 @@ export function Settings() {
 
       <section>
         <h2>내 펫</h2>
-        <PreviewWithHatDrag s={s} />
+        <PreviewWithHatDrag s={s} editing={hatEdit} setEditing={setHatEdit} />
         <label>
           닉네임
           <div className="inline">
@@ -169,12 +170,16 @@ export function Settings() {
         </div>
         {s.hat && (
           <p className="muted small-left hat-hint">
-            위 미리보기에서 모자를 끌어서 옮길 수 있어요
-            {(s.hatOffset[0] !== 0 || s.hatOffset[1] !== 0) && (
-              <button className="pill" onClick={() => saveSettings({ hatOffset: [0, 0] })}>
-                제자리로
-              </button>
-            )}
+            모자가 머리에 잘 안 맞으면 위치를 옮길 수 있어요
+            <button
+              className="pill"
+              onClick={() => {
+                setHatEdit(true);
+                document.querySelector(".preview")?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
+            >
+              ✏️ 위치 수정
+            </button>
           </p>
         )}
         <div className="label">이름표</div>
@@ -457,47 +462,92 @@ export function Settings() {
 const PREVIEW_PX = 6; // 미리보기 한 칸 = 화면 6px
 
 /**
- * 설정 맨 위 미리보기. 모자를 쓰고 있으면 마우스로 끌어서 칸 단위로 옮긴다(방향키도 된다).
- * 끄는 동안은 여기서만 보여 주고, 놓을 때 한 번 저장한다 → 친구에게 위치를 매 픽셀마다 보내지 않는다.
+ * 설정 맨 위 미리보기 + 모자 위치 수정.
+ * "모자 위치 수정"을 누르면 미리보기에서 모자를 끌어(또는 방향키로) 옮겨 볼 수 있고, 저장을 눌러야 바뀐다.
+ * 그래서 수정하는 동안은 친구에게 아무것도 보내지 않고, 취소하면 그대로다.
  */
-function PreviewWithHatDrag({ s }: { s: PetSettings }) {
+function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editing: boolean; setEditing: (v: boolean) => void }) {
+  const [draft, setDraft] = useState<HatOffset>(s.hatOffset);
   const [drag, setDrag] = useState<{ x0: number; y0: number; from: HatOffset } | null>(null);
-  const [live, setLive] = useState<HatOffset | null>(null);
-  const offset = live ?? s.hatOffset;
-  const canDrag = !!s.hat;
+  const boxRef = useRef<HTMLDivElement>(null);
+  // 수정을 시작할 때마다 지금 저장된 자리에서 시작하고, 방향키를 바로 쓸 수 있게 포커스
+  useEffect(() => {
+    if (!editing) return;
+    setDraft(s.hatOffset);
+    boxRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+  // 모자를 벗으면 수정도 끝
+  useEffect(() => {
+    if (!s.hat) setEditing(false);
+  }, [s.hat, setEditing]);
+
   const fit = (v: [number, number]) => cleanHatOffset(v, hatDyMin(s.character, !!s.image));
-  const end = () => {
-    if (live) saveSettings({ hatOffset: live });
-    setDrag(null);
-    setLive(null);
+  const offset = editing ? draft : s.hatOffset;
+  const changed = draft[0] !== s.hatOffset[0] || draft[1] !== s.hatOffset[1];
+  const atHome = draft[0] === 0 && draft[1] === 0;
+  const save = () => {
+    saveSettings({ hatOffset: draft });
+    setEditing(false);
   };
+  const cancel = () => setEditing(false);
+
   return (
-    <div
-      className={`preview${canDrag ? " hat-drag" : ""}${drag ? " dragging" : ""}`}
-      tabIndex={canDrag ? 0 : undefined}
-      role={canDrag ? "application" : undefined}
-      aria-label={canDrag ? "모자 위치: 끌거나 방향키로 옮기기" : undefined}
-      onPointerDown={(e) => {
-        if (!canDrag || e.button !== 0) return;
-        e.currentTarget.setPointerCapture(e.pointerId);
-        setDrag({ x0: e.clientX, y0: e.clientY, from: s.hatOffset });
-        setLive(s.hatOffset);
-      }}
-      onPointerMove={(e) => {
-        if (!drag) return;
-        setLive(fit([drag.from[0] + (e.clientX - drag.x0) / PREVIEW_PX, drag.from[1] + (e.clientY - drag.y0) / PREVIEW_PX]));
-      }}
-      onPointerUp={end}
-      onPointerCancel={end}
-      onKeyDown={(e) => {
-        const step = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key];
-        if (!canDrag || !step) return;
-        e.preventDefault();
-        saveSettings({ hatOffset: fit([s.hatOffset[0] + step[0], s.hatOffset[1] + step[1]]) });
-      }}
-    >
-      <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={offset} />
-    </div>
+    <>
+      <div
+        ref={boxRef}
+        className={`preview${editing ? " hat-editing" : ""}${drag ? " dragging" : ""}`}
+        tabIndex={editing ? 0 : undefined}
+        role={editing ? "application" : undefined}
+        aria-label={editing ? "모자 위치 수정: 끌거나 방향키로 옮기고 Enter로 저장, Esc로 취소" : undefined}
+        onPointerDown={(e) => {
+          if (!editing || e.button !== 0) return;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          setDrag({ x0: e.clientX, y0: e.clientY, from: draft });
+        }}
+        onPointerMove={(e) => {
+          if (!drag) return;
+          setDraft(fit([drag.from[0] + (e.clientX - drag.x0) / PREVIEW_PX, drag.from[1] + (e.clientY - drag.y0) / PREVIEW_PX]));
+        }}
+        onPointerUp={() => setDrag(null)}
+        onPointerCancel={() => setDrag(null)}
+        onKeyDown={(e) => {
+          if (!editing) return;
+          if (e.key === "Enter") return save();
+          if (e.key === "Escape") return cancel();
+          const step = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key];
+          if (!step) return;
+          e.preventDefault();
+          setDraft((d) => fit([d[0] + step[0], d[1] + step[1]]));
+        }}
+      >
+        <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={offset} />
+      </div>
+      {editing ? (
+        <div className="hat-edit-bar" role="group" aria-label="모자 위치 수정">
+          <span className="muted">모자를 끌어서 옮겨요 · 방향키로 한 칸씩</span>
+          <div className="inline">
+            <button className="ghost" disabled={atHome} onClick={() => setDraft([0, 0])}>
+              제자리로
+            </button>
+            <button className="ghost" onClick={cancel}>
+              취소
+            </button>
+            <button disabled={!changed} onClick={save}>
+              저장
+            </button>
+          </div>
+        </div>
+      ) : (
+        s.hat && (
+          <div className="hat-edit-bar">
+            <button className="pill" onClick={() => setEditing(true)}>
+              ✏️ 모자 위치 수정
+            </button>
+          </div>
+        )
+      )}
+    </>
   );
 }
 

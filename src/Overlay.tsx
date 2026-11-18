@@ -347,9 +347,13 @@ export function Overlay() {
 
   // 방 연결: presence(상태) + broadcast(채팅, 반응)
   const roomId = s.room?.id;
+  // 방을 바꿀 때만 친구 목록을 비운다. 다시 연결할 때(아래 reconnect) 비우면 꺼진 친구 펫이 1분 동안 사라진다.
   useEffect(() => {
     setPeers([]);
     setMembers([]);
+    loadRef.current();
+  }, [roomId]);
+  useEffect(() => {
     if (!roomId) return;
     let alive = true;
     let retry: ReturnType<typeof setTimeout> | undefined;

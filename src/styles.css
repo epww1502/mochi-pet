@@ -245,16 +245,30 @@ html[data-view="settings"] body {
   margin-bottom: 10px;
 }
 
-/* 모자를 끌어서 옮기기 */
-.preview.hat-drag {
+/* 모자 위치 수정 중: 점선 테두리로 "지금 옮길 수 있다"를 보여 준다 */
+.preview.hat-editing {
   cursor: grab;
   touch-action: none;
   user-select: none;
-  border-radius: 8px;
-}
-.preview.hat-drag.dragging {
-  cursor: grabbing;
+  border-radius: 10px;
+  outline: 2px dashed var(--line);
+  outline-offset: 4px;
   background: var(--soft);
+}
+.preview.hat-editing.dragging {
+  cursor: grabbing;
+}
+.preview.hat-editing:focus-visible {
+  outline: 2px dashed var(--accent);
+}
+
+.hat-edit-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: -2px 0 12px;
+  font-size: 12px;
 }
 
 .hat-hint {
