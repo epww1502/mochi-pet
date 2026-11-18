@@ -91,7 +91,21 @@ jobs:
         if: runner.os == 'macOS' && env.APPLE_API_KEY_PATH != ''
         run: |
           dmg=$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)
-          xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+          auth=(--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER")
+          # 보내고 나서 상태를 30초마다 묻는다. Apple 서버와 연결이 잠깐 끊겨도(TLS 오류 등) 멈추지 않고 다시 묻는다.
+          sub=$(xcrun notarytool submit "$dmg" "${auth[@]}" --output-format json | jq -r .id)
+          echo "dmg 공증 요청: $sub"
+          st=""
+          for i in $(seq 1 240); do
+            st=$(xcrun notarytool info "$sub" "${auth[@]}" --output-format json 2>/dev/null | jq -r '.status // empty' || true)
+            echo "[$i] ${st:-연결 실패, 다시 시도}"
+            case "$st" in
+              Accepted) break ;;
+              Invalid|Rejected) xcrun notarytool log "$sub" "${auth[@]}" || true; exit 1 ;;
+            esac
+            sleep 30
+          done
+          [ "$st" = "Accepted" ] || { echo "::error::2시간 안에 공증이 끝나지 않았어요"; exit 1; }
           xcrun stapler staple "$dmg"
           xcrun stapler validate "$dmg"
           mnt=$(mktemp -d)
