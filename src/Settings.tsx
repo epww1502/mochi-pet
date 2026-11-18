@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { CHARACTERS, COLORS, type CharacterId } from "./sprites";
-import { SIZES, importImage, saveSettings, supabase, useSettings, type Room, type SizeId } from "./state";
+import { PX_DEFAULT, PX_MAX, PX_MIN, importImage, percentOf, saveSettings, supabase, useSettings, type Room } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -91,14 +91,25 @@ export function Settings() {
           </label>
         </div>
         <p className="muted small-left">그림은 32x32 픽셀로 줄어들어 친구에게도 보여요. 배경이 투명한 PNG 픽셀아트가 제일 잘 어울려요.</p>
-        <div className="label">크기</div>
-        <div className="choices" role="radiogroup" aria-label="펫 크기">
-          {(Object.keys(SIZES) as SizeId[]).map((id) => (
-            <button key={id} className={`pill${s.size === id ? " on" : ""}`} role="radio" aria-checked={s.size === id} onClick={() => saveSettings({ size: id })}>
-              {SIZES[id].label}
+        <label className="size">
+          <span>
+            크기 <output>{percentOf(s.px)}%</output>
+          </span>
+          <div className="inline">
+            <input
+              type="range"
+              min={PX_MIN}
+              max={PX_MAX}
+              step={1}
+              value={s.px}
+              aria-valuetext={`${percentOf(s.px)}%`}
+              onChange={(e) => saveSettings({ px: Number(e.target.value) })}
+            />
+            <button className="ghost" disabled={s.px === PX_DEFAULT} onClick={() => saveSettings({ px: PX_DEFAULT })}>
+              100%
             </button>
-          ))}
-        </div>
+          </div>
+        </label>
         <div className="label">색</div>
         <div className="choices">
           {COLORS.map((c) => (

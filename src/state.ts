@@ -19,25 +19,32 @@ export type Settings = {
   /** 가져온 그림(32x32 PNG data URL). 있으면 캐릭터 대신 쓴다. */
   image: string | null;
   room: Room | null;
-  /** 화면에 보이는 펫 크기. 펫, 이름표, 말풍선, 창이 같이 커진다. */
-  size: SizeId;
+  /** 픽셀 한 칸의 화면 크기(px). 펫, 이름표, 말풍선, 창이 이 비율로 같이 커진다. */
+  px: number;
 };
 
-/** 픽셀 하나의 화면 크기(px). 정수여야 픽셀아트가 또렷하다. 보통(5)을 기준으로 나머지를 비율로 키운다. */
-export const SIZES = { xs: { label: "아주 작게", px: 3 }, s: { label: "작게", px: 4 }, m: { label: "보통", px: 5 }, l: { label: "크게", px: 7 }, xl: { label: "아주 크게", px: 10 } } as const;
-export type SizeId = keyof typeof SIZES;
+/** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
+export const PX_MIN = 3;
+export const PX_MAX = 12;
+export const PX_DEFAULT = 5;
+export const percentOf = (px: number) => px * 20;
 
-/** 저장된 값이 이상해도 보통 크기로 */
-export function sizeOf(id: unknown) {
-  return SIZES[Object.prototype.hasOwnProperty.call(SIZES, id as string) ? (id as SizeId) : "m"];
+/** v0.2.1까지 쓰던 단계 설정 */
+const LEGACY_SIZES = new Map<unknown, number>([["xs", 3], ["s", 4], ["m", 5], ["l", 7], ["xl", 10]]);
+
+/** 저장된 값에서 칸 크기를 꺼낸다. 예전 단계 설정은 이어받고, 이상한 값은 보통(100%)으로. */
+export function pxOf(saved: { px?: unknown; size?: unknown }): number {
+  const v = typeof saved.px === "number" && Number.isFinite(saved.px) ? saved.px : (LEGACY_SIZES.get(saved.size) ?? PX_DEFAULT);
+  return Math.min(PX_MAX, Math.max(PX_MIN, Math.round(v)));
 }
 
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, size: "m" };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT };
   try {
-    return { ...base, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    return { ...base, ...saved, px: pxOf(saved) };
   } catch {
     return base;
   }

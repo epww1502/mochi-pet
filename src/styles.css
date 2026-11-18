@@ -280,15 +280,19 @@ html[data-view="settings"] body {
   margin: 8px 0 0;
 }
 
-.settings button.pill {
-  background: var(--soft);
-  color: var(--ink);
-  border: 2px solid transparent;
+.settings .size {
+  margin-top: 10px;
 }
 
-.settings button.pill.on {
-  border-color: var(--line);
-  font-weight: 700;
+.settings .size output {
+  font-weight: 400;
+  color: #8a7d72;
+  margin-left: 4px;
+}
+
+.settings input[type="range"] {
+  flex: 1;
+  accent-color: var(--line);
 }
 
 .settings button.choice.on {

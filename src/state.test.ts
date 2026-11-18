@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "./sprites";
-import { MAX_IMAGE_CHARS, presenceToPeers, safeImage, sizeOf, type PeerState } from "./state";
+import { MAX_IMAGE_CHARS, presenceToPeers, pxOf, safeImage, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -60,11 +60,21 @@ describe("캐릭터 그림", () => {
   });
 });
 
-describe("sizeOf", () => {
-  it("예전 버전 설정처럼 크기 값이 없거나 이상하면 보통 크기로 그린다", () => {
-    expect(sizeOf(undefined).px).toBe(5);
-    expect(sizeOf("huge").px).toBe(5);
-    expect(sizeOf("xl").px).toBe(10);
-    expect(sizeOf("xs").px).toBe(3);
+describe("pxOf", () => {
+  it("예전 버전에서 고른 크기 단계는 같은 크기로 이어진다", () => {
+    expect(pxOf({ size: "xs" })).toBe(3);
+    expect(pxOf({ size: "l" })).toBe(7);
+  });
+
+  it("슬라이더 값은 정수 칸 크기로, 범위 밖이면 끝값으로 맞춘다", () => {
+    expect(pxOf({ px: 8, size: "xs" })).toBe(8);
+    expect(pxOf({ px: 6.6 })).toBe(7);
+    expect(pxOf({ px: 99 })).toBe(12);
+    expect(pxOf({ px: 0 })).toBe(3);
+  });
+
+  it("값이 없거나 이상하면 보통(100%)이다", () => {
+    expect(pxOf({})).toBe(5);
+    expect(pxOf({ px: Number.NaN, size: "constructor" })).toBe(5);
   });
 });

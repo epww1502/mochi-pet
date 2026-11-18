@@ -3,7 +3,7 @@ import { PhysicalPosition, PhysicalSize, currentMonitor, getCurrentWindow } from
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { useEffect, useRef, useState } from "react";
 import { Bubble, PetCanvas } from "./Pet";
-import { presenceToPeers, sizeOf, supabase, useSettings, type PeerState } from "./state";
+import { PX_DEFAULT, presenceToPeers, supabase, useSettings, type PeerState } from "./state";
 
 const AWAY_AFTER_SEC = 5 * 60;
 /** 보통 크기일 때 창 크기(논리 px). tauri.conf.json의 main 창과 같다. */
@@ -40,8 +40,8 @@ export function Overlay() {
   }, []);
 
   // 크기: 펫이 커지면 창도 같이 키우되, 오른쪽 아래 모서리는 제자리에 둔다
-  const { px } = sizeOf(s.size);
-  const scale = px / 5;
+  const px = s.px;
+  const scale = px / PX_DEFAULT;
   useEffect(() => {
     (async () => {
       const w = getCurrentWindow();
