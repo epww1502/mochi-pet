@@ -21,6 +21,53 @@ fn idle_seconds() -> u64 {
     user_idle::UserIdle::get_time().map(|t| t.as_seconds()).unwrap_or(0)
 }
 
+/// 맨 앞에 있는 다른 앱 창의 위치 [x, y, 너비, 높이] (화면 좌표, 논리 px). 펫이 그 위 모서리로 올라간다.
+/// 창의 위치만 읽고 내용·제목은 읽지 않는다. 맥에서만 지원(다른 OS는 None).
+#[tauri::command]
+fn front_window() -> Option<[f64; 4]> {
+    front_window_rect()
+}
+
+#[cfg(target_os = "macos")]
+fn front_window_rect() -> Option<[f64; 4]> {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::CFString;
+    use core_graphics::geometry::CGRect;
+    use core_graphics::window::{copy_window_info, kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly};
+
+    let list = copy_window_info(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID)?;
+    let me = std::process::id() as f64;
+    // 목록은 앞에 있는 창부터 온다
+    for item in list.iter() {
+        let d: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(*item as _) };
+        let num = |k: &str| d.find(CFString::new(k)).and_then(|v| v.downcast::<CFNumber>()).and_then(|n| n.to_f64());
+        if num("kCGWindowLayer") != Some(0.0) || num("kCGWindowOwnerPID") == Some(me) || num("kCGWindowAlpha").unwrap_or(1.0) < 0.1 {
+            continue; // 메뉴 막대·Dock 같은 특수 창, 우리 앱 창, 안 보이는 창은 건너뛴다
+        }
+        let bounds = d.find(CFString::new("kCGWindowBounds"))?;
+        let bounds: CFDictionary = unsafe { CFDictionary::wrap_under_get_rule(bounds.as_CFTypeRef() as _) };
+        let r = CGRect::from_dict_representation(&bounds)?;
+        if r.size.width < 200.0 || r.size.height < 100.0 {
+            continue; // 작은 팝업은 무시
+        }
+        return Some([r.origin.x, r.origin.y, r.size.width, r.size.height]);
+    }
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+fn front_window_rect() -> Option<[f64; 4]> {
+    None // ponytail: 윈도우는 아직 바닥만 걷는다. EnumWindows + GetWindowRect로 같은 걸 만들면 된다.
+}
+
+/// 펫 오른쪽 클릭 메뉴와 설정 창의 "펫 종료"
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 fn open_settings(app: AppHandle) {
     show_settings(&app);
@@ -47,7 +94,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(HitRects::default())
-        .invoke_handler(tauri::generate_handler![set_hit_rects, idle_seconds, open_settings])
+        .invoke_handler(tauri::generate_handler![set_hit_rects, idle_seconds, open_settings, quit_app, front_window])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory); // Dock 아이콘 숨김
@@ -98,6 +145,19 @@ fn click_through_loop(app: AppHandle) {
             .any(|[l, t, w, h]| x >= *l && x <= l + w && y >= *t && y <= t + h);
         if ignoring != Some(!over) && win.set_ignore_cursor_events(!over).is_ok() {
             ignoring = Some(!over);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[ignore = "맥에서 창이 떠 있어야 해서 손으로 돌린다: cargo test -- --ignored --nocapture"]
+    fn 맨_앞_창_위치를_읽는다() {
+        let r = super::front_window_rect();
+        println!("맨 앞 창: {r:?}");
+        if let Some([_, _, w, h]) = r {
+            assert!(w >= 200.0 && h >= 100.0);
         }
     }
 }

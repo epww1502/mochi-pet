@@ -38,6 +38,10 @@ export type Settings = {
   place: Place | null;
   /** 친구 펫 크기를 내 화면에서만 바꾼 값 (친구 id → 픽셀 한 칸) */
   friendPx: Record<string, number>;
+  /** 내 화면에서 숨긴 친구 (id → 숨길 때 이름, 다시 보기 메뉴에 쓴다) */
+  hidden: Record<string, string>;
+  /** 상태 메시지 (이름표 위에 작게, 친구에게도 보인다) */
+  statusMsg: string;
 };
 
 /** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
@@ -68,7 +72,7 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {} };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "" };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
@@ -83,6 +87,11 @@ function load(): Settings {
       weatherOn: saved.weatherOn === true,
       place: safePlace(saved.place),
       friendPx: cleanFriendPx(saved.friendPx),
+      statusMsg: cleanMsg(saved.statusMsg),
+      hidden:
+        saved.hidden && typeof saved.hidden === "object"
+          ? Object.fromEntries(Object.entries(saved.hidden as Record<string, unknown>).filter(([, n]) => typeof n === "string")) as Record<string, string>
+          : {},
     };
   } catch {
     return base;
@@ -131,6 +140,8 @@ export type PeerState = {
   tag: TagId | null;
   /** 이 펫의 크기(픽셀 한 칸). 주인이 정한 크기로 모두의 화면에 보인다 */
   px: number;
+  /** 상태 메시지 */
+  msg: string;
 };
 
 /** presence 상태(키별 배열)를 나를 뺀 친구 목록으로. 같은 사람이 여러 번 잡히면 마지막 것을 쓴다. */
@@ -156,7 +167,14 @@ function sanitizePeer(p: PeerState): PeerState {
     hat: isHat(p.hat) ? p.hat : null,
     tag: isTag(p.tag) ? p.tag : null,
     px: pxOf({ px: p.px }),
+    msg: cleanMsg(p.msg),
   };
+}
+
+export const MSG_MAX = 24;
+/** 상태 메시지: 글자만, 한 줄, 24자까지 */
+export function cleanMsg(v: unknown): string {
+  return typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, MSG_MAX) : "";
 }
 
 /** 접속 기록(1분마다)이 이 시간 안에 있으면 온라인. 컴퓨터를 끄거나 인터넷이 끊기면 3분 뒤 오프라인 */
@@ -189,6 +207,7 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
         hat: null,
         tag: null,
         px: PX_DEFAULT,
+        msg: "",
       }),
       online: false,
       lastSeen: Date.parse(m.last_seen) || null,

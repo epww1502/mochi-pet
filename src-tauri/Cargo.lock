@@ -2263,8 +2263,10 @@ dependencies = [
 
 [[package]]
 name = "mochi-pet"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
+ "core-foundation 0.10.1",
+ "core-graphics",
  "serde_json",
  "tauri",
  "tauri-build",

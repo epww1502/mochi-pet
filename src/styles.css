@@ -982,3 +982,147 @@ html[data-view="settings"] body {
   background: transparent;
   color: #2f6b45;
 }
+
+.settings section.quit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 상태 메시지: 이름표 위에 작게 */
+.status-msg {
+  position: relative;
+  z-index: 1;
+  max-width: calc(130px * var(--s));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: max(9px, calc(10px * var(--s)));
+  font-weight: 500;
+  color: rgb(255 255 255 / 0.9);
+  text-shadow:
+    1px 0 rgb(0 0 0 / 0.5),
+    -1px 0 rgb(0 0 0 / 0.5),
+    0 1px rgb(0 0 0 / 0.5),
+    0 -1px rgb(0 0 0 / 0.5);
+}
+
+/* ---------- 놀이: 공 받기, 점심 투표, 최근 대화 ---------- */
+.picker button.catch {
+  grid-column: 1 / -1;
+  font-size: max(14px, calc(16px * var(--s)));
+  font-weight: 800;
+  padding: calc(6px * var(--s)) calc(14px * var(--s));
+  background: #ffe066;
+  animation: catch-pulse 0.35s ease-in-out infinite alternate;
+}
+
+@keyframes catch-pulse {
+  to {
+    transform: scale(1.08);
+  }
+}
+
+.vote-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(150px * var(--s));
+  transform: translateX(-50%);
+  z-index: 6;
+  min-width: 260px;
+  max-width: 92vw;
+  padding: 10px 12px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  font-size: 13px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
+}
+
+.vote-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.vote-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.vote-options button {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 4px;
+  border: 1px solid #d8cfc6;
+  border-radius: 8px;
+  background: var(--soft);
+  cursor: pointer;
+}
+
+.vote-options button.on {
+  border: 2px solid var(--line);
+  background: #fff3c4;
+}
+
+.vote-options button b {
+  margin-left: 2px;
+  color: #e5484d;
+}
+
+.vote-result {
+  font-size: 16px;
+  text-align: center;
+  padding: 4px 8px;
+}
+
+.vote-result .spin {
+  font-weight: 700;
+}
+
+.mini-log {
+  width: calc(230px * var(--s));
+  min-width: 200px;
+  max-height: calc(170px * var(--s));
+  overflow-y: auto;
+  margin-bottom: calc(6px * var(--s));
+  padding: 6px 8px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  font-size: max(11px, calc(12px * var(--s)));
+  align-self: flex-end;
+}
+
+.mini-log-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.mini-log-head button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.mini-log-line {
+  padding: 2px 0;
+  border-bottom: 1px solid var(--soft);
+  overflow-wrap: anywhere;
+}
+
+/* 펫 창이 화면 전체라서, 날씨·계절 효과는 바닥 쪽 띠에만 */
+.weather-fx,
+.season-fx {
+  top: auto;
+  height: calc(340px * var(--s));
+}
+
+/* 알림은 펫들 위쪽에 */
+.toast {
+  top: auto;
+  bottom: calc(260px * var(--s));
+}

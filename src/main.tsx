@@ -17,6 +17,9 @@ if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
   const fakeUpdate = new URLSearchParams(location.search).has("update");
   mockIPC((cmd) => {
     if (cmd === "idle_seconds") return away ? 9999 : 0;
+    // ?climb 를 붙이면 가운데에 가짜 창이 있는 것처럼 (펫이 그 위로 올라가 본다)
+    if (cmd === "front_window" && new URLSearchParams(location.search).has("climb"))
+      return [window.innerWidth * 0.25, window.innerHeight * 0.35, window.innerWidth * 0.5, window.innerHeight * 0.5];
     if (cmd === "plugin:updater|check") return fakeUpdate ? { rid: 1, currentVersion: "0.2.6", version: "0.2.7", date: null, body: "", rawJson: {} } : null;
     return null;
   });

@@ -1,16 +1,18 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
 import { CHARACTERS, COLORS, type CharacterId } from "./sprites";
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
 import { useWeather } from "./WeatherFx";
-import { PX_DEFAULT, PX_MAX, PX_MIN, importImage, percentOf, saveSettings, supabase, useSettings, type Room } from "./state";
+import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, saveSettings, supabase, useSettings, type Room } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
 export function Settings() {
   const s = useSettings();
   const [name, setName] = useState(s.name);
+  const [msgDraft, setMsgDraft] = useState(s.statusMsg);
   const [roomName, setRoomName] = useState("");
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -284,6 +286,32 @@ export function Settings() {
 
       <section>
         <h2>내 상태</h2>
+        <label>
+          상태 메시지 <span className="muted">· 친구 화면에도 펫 위에 작게 보여요</span>
+          <div className="inline">
+            <input
+              value={msgDraft}
+              maxLength={MSG_MAX}
+              placeholder="예: 점심 먹는 중 🍜"
+              onChange={(e) => setMsgDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && saveSettings({ statusMsg: cleanMsg(msgDraft) })}
+            />
+            <button disabled={cleanMsg(msgDraft) === s.statusMsg} onClick={() => saveSettings({ statusMsg: cleanMsg(msgDraft) })}>
+              저장
+            </button>
+            {s.statusMsg && (
+              <button
+                className="ghost"
+                onClick={() => {
+                  setMsgDraft("");
+                  saveSettings({ statusMsg: "" });
+                }}
+              >
+                지우기
+              </button>
+            )}
+          </div>
+        </label>
         <label className="check">
           <input type="checkbox" checked={s.busy} onChange={(e) => saveSettings({ busy: e.target.checked })} />
           <span>
@@ -376,7 +404,14 @@ export function Settings() {
         </section>
       )}
 
-      <p className="muted small">펫 클릭: 채팅 · 끌기: 이동 · 오른쪽 클릭: 이 창 · 트레이 아이콘: 종료</p>
+      <section className="quit">
+        <button className="ghost" onClick={() => invoke("quit_app")}>
+          펫 종료
+        </button>
+        <span className="muted">메뉴 막대의 쿼카 아이콘이나 펫 오른쪽 클릭으로도 끌 수 있어요</span>
+      </section>
+
+      <p className="muted small">펫 클릭: 채팅 · 끌기: 옮기기 · 오른쪽 클릭: 설정·종료 메뉴</p>
     </main>
   );
 }

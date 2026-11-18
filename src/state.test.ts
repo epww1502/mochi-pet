@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, presenceToPeers, pxOf, safeImage, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, cleanMsg, presenceToPeers, pxOf, safeImage, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -14,6 +14,7 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   hat: null,
   tag: null,
   px: 5,
+  msg: "",
   ...extra,
 });
 
@@ -195,5 +196,13 @@ describe("cleanFriendPx", () => {
   it("친구별 크기는 숫자만 남기고 범위 안으로 맞춘다", () => {
     expect(cleanFriendPx({ a: 3, b: 50, c: "big", d: Number.NaN })).toEqual({ a: 3, b: 12 });
     expect(cleanFriendPx(null)).toEqual({});
+  });
+});
+
+describe("cleanMsg", () => {
+  it("상태 메시지는 한 줄, 24자까지", () => {
+    expect(cleanMsg("  점심\n먹는 중  ")).toBe("점심 먹는 중");
+    expect(cleanMsg("가".repeat(40))).toHaveLength(24);
+    expect(cleanMsg(42)).toBe("");
   });
 });

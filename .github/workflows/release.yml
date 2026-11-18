@@ -29,6 +29,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: rustup target add ${{ matrix.target }}
+      # Rust 컴파일 결과를 저장해 두고 다음 배포 때 다시 쓴다 (매번 처음부터 빌드하던 4~5분을 줄인다)
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
       - run: npm ci
       - if: matrix.test
         run: npm test

@@ -1,13 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
+import { Menu } from "@tauri-apps/api/menu";
 import { PhysicalPosition, PhysicalSize, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useRef, useState } from "react";
 import { HATS, HAT_IDS, TAGS, type HatId, type OrnamentId, type SeasonId } from "./decor";
+import { FOODS, LUNCH, RPS, VOTE_MS, rpsWinner, sanitizeGame, spin, tally, type Food, type GameMsg, type Rps } from "./games";
 import { wiggleDetector } from "./gestures";
 import { Bubble, PetCanvas } from "./Pet";
-import { newWalker, stepWalker, type Walker } from "./roam";
+import { newWalker, perchFrom, stepRoam, type Perch, type Walker } from "./roam";
 import { CHARACTERS } from "./sprites";
 import { SeasonFx, Tree, type Ornament } from "./Seasons";
 import { WeatherFx, useWeather } from "./WeatherFx";
@@ -40,8 +42,6 @@ import {
 const MAX_FRIENDS = 12;
 /** 켜져 있는 동안 "마지막 접속"을 서버에 남기는 간격 */
 const HEARTBEAT_MS = 60_000;
-/** 창 높이(보통 크기, 논리 px). 너비는 화면 전체 */
-const BASE_H = 340;
 /** 펫 한 마리 자리 너비(보통 크기, styles.css .slot과 같다) */
 const SLOT_W = 112;
 /** 걷는 속도(보통 크기 기준 px/초) */
@@ -63,7 +63,12 @@ type Chat = { sender_id: string; body: string; at: number };
 type MoodFx = { kind: Motion; at: number };
 type EmoteFx = { emoji: string; from: string; at: number };
 /** 날아가는 물건 하나: 화면 좌표 a → b */
-type Shot = { key: number; item: Throwable; a: Pt; b: Pt; at: number };
+type Shot = { key: number; item: string; a: Pt; b: Pt; at: number };
+type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
+type Vote = { id: string; by: string; from: string; options: string[]; endsAt: number; votes: Record<string, string>; result?: { winner: string; tally: Record<string, number> } };
+/** 공을 받을 수 있는 시간 */
+const CATCH_MS = 1800;
+const newId = () => Math.random().toString(36).slice(2, 10);
 type Pt = { x: number; y: number };
 
 /** 펫 몸통 가운데의 화면 좌표 (없으면 null: 화면에 안 보이는 친구) */
@@ -97,6 +102,13 @@ export function Overlay() {
   const [got, setGot] = useState<{ hat: HatId; from: string } | null>(null); // 내가 연 선물
   const [unread, setUnread] = useState(0); // 조용히 모드에서 안 본 채팅 수
   const [ornaments, setOrnaments] = useState<Ornament[]>([]);
+  // 놀이
+  const [rpsAsk, setRpsAsk] = useState<{ target: string; name: string } | null>(null); // 내가 낼 손 고르는 중
+  const [rpsIncoming, setRpsIncoming] = useState<{ id: string; by: string; from: string; theirs: Rps } | null>(null);
+  const [catchBall, setCatchBall] = useState<{ id: string; by: string; from: string; rally: number } | null>(null);
+  const [vote, setVote] = useState<Vote | null>(null);
+  const [spinning, setSpinning] = useState<string | null>(null); // 룰렛이 돌며 보여주는 메뉴
+  const [miniLog, setMiniLog] = useState<Message[] | null>(null); // 최근 대화 (열려 있으면)
   const [treeOpen, setTreeOpen] = useState(false);
   const [picker, setPicker] = useState<string | null>(null); // 이모티콘을 보낼 친구 id
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
@@ -108,7 +120,6 @@ export function Overlay() {
   const [dragging, setDragging] = useState(false); // 내 펫을 집어서 끄는 중
   const [lift, setLift] = useState(0); // 내 펫을 바닥에서 들어 올린 높이(px)
   const [falling, setFalling] = useState(false);
-  const tallRef = useRef(false); // 들어 올리는 동안 창을 화면 높이 전체로 키운다
   const channelRef = useRef<RealtimeChannel | null>(null);
   channelRef.current = channel;
 
@@ -181,6 +192,7 @@ export function Overlay() {
     hat: s.hat,
     tag: s.tag,
     px: s.px,
+    msg: s.statusMsg,
   };
   const meRef = useRef(me);
   meRef.current = me;
@@ -243,6 +255,62 @@ export function Overlay() {
   const reactRef = useRef(react);
   reactRef.current = react;
 
+  /** 놀이 신호 보내기: 방에 있으면 모두에게(나 포함), 혼자면 내 화면에만 */
+  function sendGame(m: GameMsg) {
+    if (channel) channel.send({ type: "broadcast", event: "game", payload: m });
+    else applyGame(m);
+  }
+  const sendGameRef = useRef(sendGame);
+  sendGameRef.current = sendGame;
+  const applyGameRef = useRef<(m: GameMsg) => void>(() => {});
+
+  function applyGame(m: GameMsg) {
+    const at = Date.now();
+    switch (m.t) {
+      case "feed": // 냠냠
+        setEmotes((p) => ({ ...p, [m.target]: { emoji: m.food, from: m.by === m.target ? "냠냠!" : `${m.from}가 준 간식`, at } }));
+        setMoods((p) => ({ ...p, [m.target]: { kind: "happy", at } }));
+        break;
+      case "rps":
+        if (m.target === selfId) setRpsIncoming({ id: m.id, by: m.by, from: m.from, theirs: m.choice });
+        setEmotes((p) => ({ ...p, [m.by]: { emoji: "✊✌️✋", from: "가위바위보!", at } }));
+        break;
+      case "rpsAns": {
+        // by = 받은 사람(답한 쪽), target = 신청한 사람
+        const w = rpsWinner(m.theirs, m.choice);
+        setEmotes((p) => ({ ...p, [m.target]: { emoji: RPS[m.theirs], from: w === 1 ? "이겼다!" : w === 2 ? "졌다…" : "비김", at }, [m.by]: { emoji: RPS[m.choice], from: w === 2 ? "이겼다!" : w === 1 ? "졌다…" : "비김", at } }));
+        setMoods((p) => ({
+          ...p,
+          [m.target]: { kind: w === 0 ? "surprised" : w === 1 ? "cheer" : "sad", at },
+          [m.by]: { kind: w === 0 ? "surprised" : w === 2 ? "cheer" : "sad", at },
+        }));
+        break;
+      }
+      case "ball": {
+        const a = petCenter(m.by);
+        const b = petCenter(m.target);
+        if (a && b) setShots((p) => [...p, { key: at + Math.random(), item: "⚽", a, b, at }]);
+        setMoods((p) => ({ ...p, [m.by]: { kind: "cheer", at } }));
+        // 내가 받을 차례면 공이 닿을 때 "받아!" 버튼
+        if (m.target === selfId) setTimeout(() => setCatchBall({ id: m.id, by: m.by, from: m.from, rally: m.rally }), a && b ? FLIGHT_MS - 200 : 0);
+        break;
+      }
+      case "miss":
+        setMoods((p) => ({ ...p, [m.by]: { kind: "slip", at } }));
+        setEmotes((p) => ({ ...p, [m.by]: { emoji: "⚽", from: m.rally > 0 ? `랠리 ${m.rally}번!` : "놓쳤다!", at } }));
+        break;
+      case "voteStart":
+        setVote({ id: m.id, by: m.by, from: m.from, options: m.options, endsAt: m.endsAt, votes: {} });
+        break;
+      case "vote":
+        setVote((v) => (v && v.id === m.id && !v.result ? { ...v, votes: { ...v.votes, [m.by]: m.choice } } : v));
+        break;
+      case "voteResult":
+        setVote((v) => (v && v.id === m.id ? { ...v, result: { winner: m.winner, tally: m.tally } } : v));
+        break;
+    }
+  }
+
   // 방 연결: presence(상태) + broadcast(채팅, 반응)
   const roomId = s.room?.id;
   useEffect(() => {
@@ -257,8 +325,13 @@ export function Overlay() {
         // 조용히 모드: 친구 말풍선은 띄우지 않고 개수만 센다 (내용은 설정 창 최근 대화에 남아 있다)
         if (quietRef.current && c.sender_id !== s.deviceId) return setUnread((n) => n + 1);
         setChats((prev) => ({ ...prev, [c.sender_id]: { ...c, at: Date.now() } }));
+        appendLogRef.current(c);
       })
       .on("broadcast", { event: "tree" }, () => loadTreeRef.current())
+      .on("broadcast", { event: "game" }, ({ payload }) => {
+        const g = sanitizeGame(payload);
+        if (g) applyGameRef.current(g);
+      })
       .on("broadcast", { event: "react" }, ({ payload }) => {
         const r = sanitizeReaction(payload);
         if (r) applyReaction(r);
@@ -311,40 +384,47 @@ export function Overlay() {
   }, [roomId, s.deviceId, look]);
 
   // 친구 펫 크기는 내가 바꿨으면 그 크기로 (내 화면에서만)
-  const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS, now).map((p) =>
-    s.friendPx[p.id] ? { ...p, px: s.friendPx[p.id] } : p,
-  );
-  const winScale = Math.max(px, ...roster.map((p) => p.px)) / PX_DEFAULT;
-  const placeRef = useRef<() => Promise<void>>(async () => {});
-  function setTall(on: boolean) {
-    if (tallRef.current === on) return;
-    tallRef.current = on;
-    placeRef.current();
-  }
-
-  // 창: 지금 모니터의 작업 영역(Dock·작업 표시줄 제외) 바닥에 화면 너비 전체로 깐다. 높이는 제일 큰 펫에 맞춘다.
+  // 숨긴 친구는 빼고 (내 화면에서만)
+  const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS, now)
+    .filter((p) => !s.hidden[p.id])
+    .map((p) => (s.friendPx[p.id] ? { ...p, px: s.friendPx[p.id] } : p));
+  // 창: 지금 모니터의 작업 영역(Dock·작업 표시줄 제외) 전체를 덮는 투명 창. 클릭은 펫 위에서만 받는다.
+  // 화면 전체라서 펫을 높이 들어 올리거나 다른 창 위로 올라갈 수 있다.
+  const overlayRef = useRef({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }); // 화면 좌표(논리 px)
   useEffect(() => {
     const place = async () => {
       const w = getCurrentWindow();
       const mon = await currentMonitor();
       if (!mon) return;
       const a = mon.workArea;
-      const h = tallRef.current ? a.size.height : Math.round(BASE_H * winScale * mon.scaleFactor);
-      await w.setSize(new PhysicalSize(a.size.width, h));
-      await w.setPosition(new PhysicalPosition(a.position.x, a.position.y + a.size.height - h));
+      const sf = mon.scaleFactor;
+      await w.setSize(new PhysicalSize(a.size.width, a.size.height));
+      await w.setPosition(new PhysicalPosition(a.position.x, a.position.y));
+      overlayRef.current = { x: a.position.x / sf, y: a.position.y / sf, w: a.size.width / sf, h: a.size.height / sf };
     };
-    placeRef.current = place;
     place();
     const un = getCurrentWindow().onScaleChanged(() => place()); // 해상도가 다른 모니터로 옮겨지면 다시
     return () => void un.then((f) => f());
-  }, [winScale]);
+  }, []);
+
+  // 맨 앞 창 모서리 (펫이 올라갈 곳). 1.5초마다 다시 본다.
+  const frontRef = useRef<Perch | null>(null);
+  useEffect(() => {
+    const look = () =>
+      invoke<[number, number, number, number] | null>("front_window")
+        .then((r) => (frontRef.current = perchFrom(r, overlayRef.current, SLOT_W * scale)))
+        .catch(() => (frontRef.current = null));
+    look();
+    const id = setInterval(look, 1500);
+    return () => clearInterval(id);
+  }, [scale]);
 
 
   // 펫마다 화면 바닥을 따라 따로 걷는다 (0.1초마다). 반응 중·채팅 중·자리 비움이면 제자리.
   const walkers = useRef(new Map<string, Walker>());
   const [, setWalkTick] = useState(0);
   const walkState = useRef({ me, roster, moods, bigs, gifts, picker, busyMe: false });
-  walkState.current = { me, roster, moods, bigs, gifts, picker, busyMe: draft !== null || !!replyTo || !!got || dragging || falling || lift > 0 };
+  walkState.current = { me, roster, moods, bigs, gifts, picker, busyMe: draft !== null || !!replyTo || !!got || dragging || falling || lift > 0 || !!catchBall || !!rpsIncoming || !!rpsAsk || !!miniLog };
   useEffect(() => {
     let last = performance.now();
     const id = setInterval(() => {
@@ -363,7 +443,7 @@ export function Overlay() {
         const mine = p.id === st.me.id;
         const canWalk = p.online && p.status === "idle" && !st.moods[p.id] && !st.bigs[p.id] && !st.gifts[p.id] && st.picker !== p.id && !(mine && st.busyMe);
         if (mine && dragging) continue; // 끄는 중엔 손이 정한다
-        walkers.current.set(p.id, stepWalker(w, dt, now, maxX, WALK_SPEED * k, canWalk));
+        walkers.current.set(p.id, stepRoam(w, { dt, now, maxX, slotW: SLOT_W * k, speed: WALK_SPEED * k, canWalk, front: frontRef.current }));
       }
       setWalkTick((n) => (n + 1) % 1_000_000);
     }, 100);
@@ -374,7 +454,7 @@ export function Overlay() {
     const w = walkers.current.get(id);
     const x = w?.x ?? 0;
     const edge = x < 150 * k ? " near-left" : x > stageW - (SLOT_W + 150) * k ? " near-right" : "";
-    return { x, walk: w ? { moving: w.moving, faceLeft: w.faceLeft } : null, edge };
+    return { x, lift: w?.y ?? 0, walk: w ? { moving: w.moving, faceLeft: w.faceLeft } : null, edge };
   };
 
   // 내 상태가 바뀔 때마다 presence 갱신
@@ -477,7 +557,12 @@ export function Overlay() {
   liftRef.current = lift;
   const onDown = (e: React.MouseEvent) => {
     if (e.button !== 0 || falling) return;
-    press.current = { x: e.clientX, sy: e.screenY, offset: e.clientX - (walkers.current.get(me.id)?.x ?? 0), moved: false };
+    const w = walkers.current.get(me.id);
+    // 창 위에 올라가 있던 펫을 집으면 그 높이에서 시작한다
+    const startLift = w?.y ?? 0;
+    if (w) walkers.current.set(me.id, { ...w, y: 0, perch: null, jump: null });
+    if (startLift > 0) setLift(startLift);
+    press.current = { x: e.clientX, sy: e.screenY + startLift, offset: e.clientX - (w?.x ?? 0), moved: startLift > 0 };
     setDragging(true);
     // 펫 밖으로 커서가 나가도 놓치지 않게 잠깐 창 전체가 클릭을 받는다
     invoke("set_hit_rects", { rects: [[0, 0, window.innerWidth, window.innerHeight]] });
@@ -491,8 +576,7 @@ export function Overlay() {
       if (!p.moved && (Math.abs(e.clientX - p.x) > 4 || Math.abs(e.screenY - p.sy) > 4)) p.moved = true;
       if (!p.moved) return;
       // 위로 들어 올리기: 창이 커지면 clientY가 바뀌므로 화면 좌표(screenY)로 잰다
-      const up = Math.max(0, Math.min(p.sy - e.screenY, screen.availHeight - 140));
-      if (up > 0) setTall(true);
+      const up = Math.max(0, Math.min(p.sy - e.screenY, window.innerHeight - 140));
       setLift(up);
       const w = walkers.current.get(selfId);
       const maxX = Math.max(0, window.innerWidth - SLOT_W * scale);
@@ -540,7 +624,6 @@ export function Overlay() {
         else {
           setLift(0);
           setFalling(false);
-          setTall(false);
           if (from > 150) reactRef.current(selfId, "dizzy");
           clearInterval(id);
           return;
@@ -551,6 +634,36 @@ export function Overlay() {
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [falling]);
+
+  // 내 펫 오른쪽 클릭: 운영체제 기본 메뉴로 "설정 열기 / 펫 종료"
+  async function showPetMenu() {
+    try {
+      const menu = await Menu.new({
+        items: [
+          { id: "settings", text: "설정 열기", action: () => invoke("open_settings") },
+          { id: "log", text: "최근 대화 보기", action: () => openMiniLog() },
+          { id: "eat", text: "간식 먹기", action: () => sendGame({ t: "feed", by: selfId, from: me.name, target: selfId, food: FOODS[Math.floor(Math.random() * FOODS.length)] }) },
+          { id: "lunch", text: "점심 메뉴 투표 시작", action: () => startVote() },
+          // 숨긴 친구 다시 보기
+          ...Object.entries(s.hidden).map(([id, name]) => ({
+            id: `show-${id}`,
+            text: `${name} 다시 보기`,
+            action: () => {
+              const { [id]: _shown, ...rest } = s.hidden;
+              saveSettings({ hidden: rest });
+            },
+          })),
+          ...(Object.keys(s.hidden).length > 1
+            ? [{ id: "show-all", text: "숨긴 친구 모두 다시 보기", action: () => saveSettings({ hidden: {} }) }]
+            : []),
+          { id: "quit", text: "펫 종료", action: () => invoke("quit_app") },
+        ],
+      });
+      await menu.popup();
+    } catch {
+      invoke("open_settings"); // 메뉴를 못 띄우면(브라우저 미리보기 등) 설정 창으로
+    }
+  }
 
   // 친구 펫: 한 번 누르면 이모티콘·던지기 창, 0.7초 안에 세 번 누르면 콕 찌르기
   const taps = useRef(new Map<string, number[]>());
@@ -592,7 +705,151 @@ export function Overlay() {
     channel?.send({ type: "broadcast", event: "tree", payload: {} });
   }
 
-  // 내 펫 위에 잠깐 뜨는 것: 입력창 > 답장 추천 > 선물 열어 본 결과
+  applyGameRef.current = applyGame;
+
+  // 최근 대화 (미니 기록)
+  const appendLogRef = useRef<(c: { sender_id: string; body: string }) => void>(() => {});
+  appendLogRef.current = (c) =>
+    setMiniLog((log) =>
+      log
+        ? [
+            ...log.slice(-11),
+            {
+              id: Date.now(),
+              sender_id: c.sender_id,
+              sender_name: c.sender_id === selfId ? me.name : (roster.find((p) => p.id === c.sender_id)?.name ?? "친구"),
+              body: c.body,
+              created_at: new Date().toISOString(),
+            },
+          ]
+        : log,
+    );
+  async function openMiniLog() {
+    setUnread(0);
+    if (!roomId) return setError("방에 들어가면 최근 대화를 볼 수 있어요");
+    const { data } = await supabase.rpc("recent_messages", { p_room: roomId, p_limit: 12 });
+    setMiniLog((data as Message[]) ?? []);
+  }
+  const miniLogPanel = miniLog ? (
+    <div className="mini-log" data-hit role="log" aria-label="최근 대화">
+      <div className="mini-log-head">
+        <b>최근 대화</b>
+        <button aria-label="닫기" onClick={() => setMiniLog(null)}>
+          ✕
+        </button>
+      </div>
+      {miniLog.length === 0 && <div className="muted">아직 대화가 없어요</div>}
+      {miniLog.map((m) => (
+        <div key={m.id} className="mini-log-line">
+          <b>{m.sender_id === selfId ? "나" : m.sender_name}</b> {m.body}
+        </div>
+      ))}
+    </div>
+  ) : undefined;
+
+  // 점심 투표: 시작한 사람이 마감 때 룰렛을 돌려 결과를 모두에게 보낸다
+  function startVote() {
+    if (vote && !vote.result) return;
+    sendGame({ t: "voteStart", id: newId(), by: selfId, from: me.name, options: [...LUNCH], endsAt: Date.now() + VOTE_MS });
+  }
+  const voteRef = useRef(vote);
+  voteRef.current = vote;
+  const [now2, setNow2] = useState(() => Date.now()); // 투표 남은 초
+  useEffect(() => {
+    if (!vote || vote.result) return;
+    setNow2(Date.now()); // 처음부터 남은 초를 맞게
+    const id = setInterval(() => setNow2(Date.now()), 1000);
+    const end = setTimeout(
+      () => {
+        const v = voteRef.current;
+        if (!v || v.result || v.by !== selfId) return;
+        const t = tally(v.votes, v.options);
+        sendGameRef.current({ t: "voteResult", id: v.id, winner: spin(t), tally: t });
+      },
+      Math.max(0, vote.endsAt - Date.now()),
+    );
+    return () => {
+      clearInterval(id);
+      clearTimeout(end);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vote?.id, !!vote?.result]);
+  // 결과가 나오면 룰렛이 2.5초 돌다가 멈추고, 8초 뒤 닫힌다
+  useEffect(() => {
+    if (!vote?.result) return;
+    const opts = vote.options;
+    let i = 0;
+    const roll = setInterval(() => setSpinning(opts[i++ % opts.length]), 90);
+    const stop = setTimeout(() => {
+      clearInterval(roll);
+      setSpinning(null);
+    }, 2500);
+    const close = setTimeout(() => setVote(null), 10_000);
+    return () => {
+      clearInterval(roll);
+      clearTimeout(stop);
+      clearTimeout(close);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vote?.result?.winner, vote?.id]);
+
+  // 공 받기: 정해진 시간 안에 못 누르면 놓친다
+  useEffect(() => {
+    if (!catchBall) return;
+    const id = setTimeout(() => {
+      sendGameRef.current({ t: "miss", id: catchBall.id, by: selfId, from: me.name, rally: catchBall.rally });
+      setCatchBall(null);
+    }, CATCH_MS);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catchBall]);
+  // 가위바위보 고르는 창은 12초 뒤 닫힌다
+  useEffect(() => {
+    if (!rpsAsk && !rpsIncoming) return;
+    const id = setTimeout(() => {
+      setRpsAsk(null);
+      setRpsIncoming(null);
+    }, 12_000);
+    return () => clearTimeout(id);
+  }, [rpsAsk, rpsIncoming]);
+
+  const hands = (onPick: (r: Rps) => void) =>
+    (Object.keys(RPS) as Rps[]).map((r) => (
+      <button key={r} aria-label={r === "rock" ? "바위" : r === "scissors" ? "가위" : "보"} onClick={() => onPick(r)}>
+        {RPS[r]}
+      </button>
+    ));
+  const gamePopup = catchBall ? (
+    <div className="picker replies" data-hit role="dialog" aria-label="공 받기">
+      <button
+        className="catch"
+        onClick={() => {
+          sendGame({ t: "ball", id: catchBall.id, by: selfId, from: me.name, target: catchBall.by, rally: catchBall.rally + 1 });
+          setCatchBall(null);
+        }}
+      >
+        ⚽ 받아!
+      </button>
+    </div>
+  ) : rpsIncoming ? (
+    <div className="picker replies" data-hit role="dialog" aria-label="가위바위보">
+      <span className="reply-label">{rpsIncoming.from}의 가위바위보!</span>
+      {hands((r) => {
+        sendGame({ t: "rpsAns", id: rpsIncoming.id, by: selfId, from: me.name, target: rpsIncoming.by, choice: r, theirs: rpsIncoming.theirs });
+        setRpsIncoming(null);
+      })}
+    </div>
+  ) : rpsAsk ? (
+    <div className="picker replies" data-hit role="dialog" aria-label="가위바위보 신청">
+      <span className="reply-label">{rpsAsk.name}에게 낼 손</span>
+      {hands((r) => {
+        sendGame({ t: "rps", id: newId(), by: selfId, from: me.name, target: rpsAsk.target, choice: r });
+        setRpsAsk(null);
+      })}
+    </div>
+  ) : undefined;
+
+  // 내 펫 위에 잠깐 뜨는 것: 입력창 > 놀이 > 답장 추천 > 선물 열어 본 결과 > 최근 대화
   const gotChip = got ? (
     <div className="picker replies" data-hit role="dialog" aria-label="받은 선물">
       <span className="reply-label">
@@ -642,13 +899,13 @@ export function Overlay() {
           {...fx(me.id)}
           {...(lift > 0 && !falling ? { mood: "surprised" as Motion } : {})}
           {...posOf(me.id, px)}
-          lift={lift}
-          title="클릭: 채팅 · 더블클릭: 크게 인사 · 끌기: 옮기기(흔들면 어지러워해요) · 머리 문지르기: 쓰다듬기 · 오른쪽 클릭: 설정"
+          {...(lift > 0 ? { lift } : {})}
+          title="클릭: 채팅 · 더블클릭: 크게 인사 · 끌기: 옮기기(흔들면 어지러워해요) · 머리 문지르기: 쓰다듬기 · 오른쪽 클릭: 설정·종료"
           onMouseDown={onDown}
           onMouseMove={(e) => onPetHover(me.id, e)}
           onContextMenu={(e) => {
             e.preventDefault();
-            invoke("open_settings");
+            showPetMenu();
           }}
           onOpenGift={(g) => {
             setGot({ hat: g.hat, from: g.from });
@@ -662,7 +919,7 @@ export function Overlay() {
                 title="조용히 모드 동안 온 채팅 — 눌러서 모아 보기"
                 onClick={() => {
                   setUnread(0);
-                  invoke("open_settings");
+                  openMiniLog();
                 }}
               >
                 💬 {unread}
@@ -689,7 +946,7 @@ export function Overlay() {
                 ))}
               </div>
             ) : (
-              gotChip
+              (gamePopup ?? gotChip ?? miniLogPanel)
             )
           ) : (
             <input
@@ -735,6 +992,37 @@ export function Overlay() {
                     {emoji}
                   </button>
                 ))}
+                <span className="reply-label">간식</span>
+                {FOODS.map((food) => (
+                  <button
+                    key={food}
+                    aria-label={`${food} 간식 주기`}
+                    onClick={() => {
+                      sendGame({ t: "feed", by: selfId, from: me.name, target: p.id, food: food as Food });
+                      setPicker(null);
+                    }}
+                  >
+                    {food}
+                  </button>
+                ))}
+                <button
+                  className="wide"
+                  onClick={() => {
+                    setPicker(null);
+                    setRpsAsk({ target: p.id, name: p.name });
+                  }}
+                >
+                  ✊ 가위바위보
+                </button>
+                <button
+                  className="wide"
+                  onClick={() => {
+                    setPicker(null);
+                    sendGame({ t: "ball", id: newId(), by: selfId, from: me.name, target: p.id, rally: 0 });
+                  }}
+                >
+                  ⚽ 공놀이
+                </button>
                 <span className="reply-label">던지기 · 선물</span>
                 {(Object.keys(THROWABLES) as Throwable[]).map((item) => (
                   <button
@@ -776,6 +1064,17 @@ export function Overlay() {
                 >
                   ＋
                 </button>
+                <button
+                  className="wide full"
+                  aria-label={`${p.name} 펫 숨기기`}
+                  title="내 화면에서만 숨겨요. 내 펫 오른쪽 클릭 메뉴에서 다시 볼 수 있어요"
+                  onClick={() => {
+                    setPicker(null);
+                    saveSettings({ hidden: { ...s.hidden, [p.id]: p.name } });
+                  }}
+                >
+                  🙈 숨기기
+                </button>
                 {s.friendPx[p.id] !== undefined && (
                   <button
                     className="wide full"
@@ -796,6 +1095,42 @@ export function Overlay() {
         )}
       </div>
       {dragging && <div className="drag-catcher" data-hit aria-hidden />}
+      {vote && (
+        <div className="vote-panel" data-hit role="dialog" aria-label="점심 메뉴 투표">
+          {vote.result ? (
+            <div className="vote-result" aria-live="polite">
+              {spinning ? (
+                <span className="spin">🎰 {spinning}</span>
+              ) : (
+                <>
+                  🎉 오늘 점심은 <b>{vote.result.winner}</b>!
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="vote-title">
+                🍱 점심 뭐 먹지? <span className="muted">({vote.from} · {Math.max(0, Math.ceil((vote.endsAt - now2) / 1000))}초)</span>
+              </div>
+              <div className="vote-options">
+                {vote.options.map((o) => {
+                  const n = tally(vote.votes, vote.options)[o];
+                  return (
+                    <button
+                      key={o}
+                      className={vote.votes[selfId] === o ? "on" : ""}
+                      aria-pressed={vote.votes[selfId] === o}
+                      onClick={() => sendGame({ t: "vote", id: vote.id, by: selfId, choice: o })}
+                    >
+                      {o} {n > 0 && <b>{n}</b>}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
       <SeasonFx seasons={s.seasons as SeasonId[]} />
       <WeatherFx weather={weather} scale={scale} />
       {shots.map((shot) => (
@@ -908,6 +1243,7 @@ function PetSlot({
           <span className="from">{emote.from}</span>
         </div>
       )}
+      {peer.msg && peer.online && labelPos === "above" && <div className="status-msg">{peer.msg}</div>}
       {labelPos === "above" && label}
       <div className="pet" data-hit {...handlers}>
         <PetCanvas
@@ -938,6 +1274,7 @@ function PetSlot({
         )}
       </div>
       {labelPos === "below" && label}
+      {peer.msg && peer.online && labelPos === "below" && <div className="status-msg">{peer.msg}</div>}
     </div>
   );
 }
