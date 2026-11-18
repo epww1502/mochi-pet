@@ -18,6 +18,12 @@ type Props = {
   hatScale?: number;
   /** 캔버스를 적어도 이만큼(칸)은 크게: 모자를 고치는 동안 크기가 들쑥날쑥하지 않게 */
   minCells?: { cols: number; rows: number };
+  /** 움직이지 않게 (편집할 때: 누르려는 곳이 숨쉬며 들썩이지 않게) */
+  still?: boolean;
+  /** 그림 펫의 그림 틀(14칸 네모)을 점선으로 보여 준다 (편집할 때) */
+  showFrame?: boolean;
+  /** 화면 좌표가 모자 위인지, 펫(그림) 위인지 알려 주는 함수를 여기에 둔다 */
+  hitRef?: React.MutableRefObject<((clientX: number, clientY: number) => "hat" | "pet" | null) | null>;
 };
 
 /** 화면 배율(레티나 2, 윈도우 125% 등). 창을 다른 모니터로 옮기면 바뀐다. */
@@ -31,7 +37,7 @@ function useDevicePixelRatio() {
   return dpr;
 }
 
-export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0], hatScale = 1, minCells }: Props) {
+export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0], hatScale = 1, minCells, still = false, hitRef, showFrame = false }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const dpr = useDevicePixelRatio();
   // 캔버스를 화면의 실제 픽셀로 그린다. 한 칸 = 정수 개의 실제 픽셀이라 늘려 보일 때 뭉개지지 않는다.
@@ -50,19 +56,59 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
     const img = image ? Object.assign(new Image(), { src: image }) : null;
     let content: { top: number; cx: number } | undefined; // 그림이 실제로 있는 자리 (처음 그릴 때 한 번 잰다)
     const born = performance.now();
-    const tick = () => {
-      const t = (performance.now() - born) / 1000;
+    const draw = (c: CanvasRenderingContext2D, t: number, only: "hat" | null = null) => {
       if (img) {
         if (img.complete && img.naturalWidth) {
           content ??= contentBox(img);
-          drawImagePet(ctx, cell, img, mood, t, walkRef.current, hat, [dx, dy], hatScale, content);
+          drawImagePet(c, cell, img, mood, t, walkRef.current, hat, [dx, dy], hatScale, content, only);
         }
-      } else drawPet(ctx, cell, character, color, mood, t, walkRef.current, hat, [dx, dy], hatScale);
+      } else drawPet(c, cell, character, color, mood, t, walkRef.current, hat, [dx, dy], hatScale, only);
     };
+    const tick = () => {
+      draw(ctx, still ? 0 : (performance.now() - born) / 1000);
+      if (showFrame && img) {
+        // 그림 틀: 펫 칸 가운데, 바닥에서 14칸 네모
+        const homeX = 2 + Math.round((cols - 20) / 2);
+        const cx = (homeX + 8) * cell;
+        const bottom = rows * cell;
+        ctx.save();
+        ctx.setLineDash([cell, cell]);
+        ctx.strokeStyle = "rgba(91, 58, 41, 0.45)";
+        ctx.lineWidth = Math.max(1, Math.round(cell / 4));
+        ctx.strokeRect(cx - 7 * cell + 0.5, bottom - 14 * cell + 0.5, 14 * cell - 1, 14 * cell - 1);
+        ctx.restore();
+      }
+    };
+    if (hitRef)
+      hitRef.current = (clientX, clientY) => {
+        const canvas = ref.current;
+        if (!canvas) return null;
+        const r = canvas.getBoundingClientRect();
+        const x = Math.round(((clientX - r.left) / r.width) * canvas.width);
+        const y = Math.round(((clientY - r.top) / r.height) * canvas.height);
+        const near = (data: Uint8ClampedArray, w: number, h: number) => {
+          // 한 칸 둘레까지 봐서 작은 모자도 누르기 쉽게
+          for (let oy = -cell; oy <= cell; oy += cell)
+            for (let ox = -cell; ox <= cell; ox += cell) {
+              const px2 = x + ox, py = y + oy;
+              if (px2 >= 0 && py >= 0 && px2 < w && py < h && data[(py * w + px2) * 4 + 3] > 0) return true;
+            }
+          return false;
+        };
+        if (hat) {
+          const off = document.createElement("canvas");
+          off.width = canvas.width;
+          off.height = canvas.height;
+          const octx = off.getContext("2d")!;
+          draw(octx, still ? 0 : (performance.now() - born) / 1000, "hat");
+          if (near(octx.getImageData(0, 0, off.width, off.height).data, off.width, off.height)) return "hat";
+        }
+        return near(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height) ? "pet" : null;
+      };
     tick();
     const id = setInterval(tick, 80); // 초당 약 12번: 상시 실행이라 가볍게
     return () => clearInterval(id);
-  }, [character, color, image, mood, cell, hat, dx, dy, hatScale, rows, cols]);
+  }, [character, color, image, mood, cell, hat, dx, dy, hatScale, rows, cols, still, hitRef, showFrame]);
   return (
     <canvas
       ref={ref}

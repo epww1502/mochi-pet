@@ -5,7 +5,7 @@ export type PictureFit = { x: number; y: number; zoom: number };
 export const FIT_DEFAULT: PictureFit = { x: 0, y: 0, zoom: 1 };
 export const FIT_ZOOM_MIN = 0.5;
 export const FIT_ZOOM_MAX = 3;
-export const FIT_MOVE_MAX = 48;
+export const FIT_MOVE_MAX = 128; // 3배로 키운 그림을 끝까지 훑어볼 만큼
 /** 구운 그림 크기 (칸) */
 export const BAKE = 64;
 
@@ -18,6 +18,21 @@ export function cleanFit(v: unknown): PictureFit {
     y: Math.round(num(o.y, -FIT_MOVE_MAX, FIT_MOVE_MAX, 0)),
     zoom: Math.round(num(o.zoom, FIT_ZOOM_MIN, FIT_ZOOM_MAX, 1) * 20) / 20,
   };
+}
+
+/**
+ * 옮긴 칸을 그림이 64칸 틀 밖으로 잘리지 않게 맞춘다.
+ * 틀보다 작으면 틀 안에서만, 틀보다 크면 틀이 그림 안에 있게(보여 줄 부분 고르기). 아래로는 바닥 밑으로 안 내려간다.
+ */
+export function clampFit(fit: PictureFit, iw: number, ih: number): PictureFit {
+  const s = (BAKE / Math.max(iw, ih, 1)) * fit.zoom;
+  const w = Math.round(iw * s);
+  const h = Math.round(ih * s);
+  const sideX = Math.abs(BAKE - w) / 2; // 가운데에서 양옆으로 갈 수 있는 칸
+  const x = Math.round(Math.min(sideX, Math.max(-sideX, fit.x)));
+  // 기본은 바닥에 붙어 있다(y=0). 작으면 위로만(바닥 밑 X), 크면 아래로만(틀 위를 넘는 부분을 보여 주려고)
+  const y = Math.round(h <= BAKE ? Math.min(0, Math.max(-(BAKE - h), fit.y)) : Math.max(0, Math.min(h - BAKE, fit.y)));
+  return { ...fit, x, y };
 }
 
 /** RGBA 픽셀에서 안 투명한 칸의 범위. 다 투명하면 null */

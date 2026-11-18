@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { PetCanvas } from "./Pet";
-import { FIT_DEFAULT, FIT_ZOOM_MAX, FIT_ZOOM_MIN, bakePicture, cleanFit, loadImage, type PictureFit } from "./picture";
+import { FIT_DEFAULT, FIT_ZOOM_MAX, FIT_ZOOM_MIN, bakePicture, cleanFit, loadImage, clampFit, trimCanvas, type PictureFit } from "./picture";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
 import { CHARACTERS, COLORS, HAT_DX_MAX, HAT_DY_MIN, HAT_SCALE_MAX, canvasCells, HAT_SCALE_MIN, HAT_SCALE_STEP, cleanHatOffset, cleanHatScale, hatDyMin, type CharacterId, type HatOffset, type HatScale } from "./sprites";
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
@@ -600,7 +600,9 @@ type EditTarget = "pet" | "hat";
 function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; onDone: () => void }) {
   const hasImage = !!s.image;
   const orig = s.imageOrig ?? s.image;
+  // 무엇을 고치는지: 누른 것(모자/그림)으로 바뀐다. 휠·방향키도 이걸 고친다.
   const [target, setTarget] = useState<EditTarget>(start === "pet" && !hasImage ? "hat" : start);
+  const hitRef = useRef<((x: number, y: number) => "hat" | "pet" | null) | null>(null);
   const [px, setPx] = useState(s.px);
   const [hatOff, setHatOff] = useState<HatOffset>(s.hatOffset);
   const [hatScale, setHatScale] = useState<HatScale>(s.hatScale);
@@ -613,7 +615,17 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
     boxRef.current?.focus();
     if (!orig) return;
     let live = true;
-    loadImage(orig).then((i) => live && setImg(i), () => live && setErr("그림을 읽지 못했어요"));
+    // 예전에 가져온 그림은 빈 테두리가 남아 있을 수 있어 여기서 잘라 낸다 (그래야 틀 안에서 옮길 자리가 생긴다)
+    loadImage(orig)
+      .then((i) => {
+        const c = document.createElement("canvas");
+        c.width = i.naturalWidth;
+        c.height = i.naturalHeight;
+        c.getContext("2d")!.drawImage(i, 0, 0);
+        const t = trimCanvas(c);
+        return t === c ? i : loadImage(t.toDataURL("image/png"));
+      })
+      .then((i) => live && setImg(i), () => live && setErr("그림을 읽지 못했어요"));
     return () => {
       live = false;
     };
@@ -623,8 +635,18 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
   const view = Math.min(EDIT_PX_MAX, px); // 미리보기 한 칸
   const url = hasImage ? (img ? bakePicture(img, fit) : s.image) : null;
   const fitHat = (v: [number, number]) => cleanHatOffset(v, hatDyMin(s.character, hasImage));
+  // 그림은 64칸 틀 밖으로 잘리지 않게 (작으면 틀 안에서, 크면 보여 줄 부분 고르기)
+  const fitPic = (f: PictureFit) => (img ? clampFit(cleanFit(f), img.naturalWidth, img.naturalHeight) : cleanFit(f));
   const editCells = canvasCells(hasImage ? 0 : CHARACTERS[s.character].headY, !!s.hat, [HAT_DX_MAX, HAT_DY_MIN], HAT_SCALE_MAX);
   const picPerPx = 64 / (14 * view); // 화면 1px = 그림 몇 칸
+  // 지금 크기로는 틀 안에서 더 옮길 자리가 없는지 (꽉 찬 그림)
+  const picStuck =
+    !!img &&
+    (() => {
+      const a = clampFit({ x: 999, y: -999, zoom: fit.zoom }, img.naturalWidth, img.naturalHeight);
+      const b = clampFit({ x: -999, y: 999, zoom: fit.zoom }, img.naturalWidth, img.naturalHeight);
+      return a.x === b.x && a.y === b.y;
+    })();
 
   const fitChanged = hasImage && (!s.imageOrig || fit.x !== s.imageFit.x || fit.y !== s.imageFit.y || fit.zoom !== s.imageFit.zoom);
   const changed = px !== s.px || hatOff[0] !== s.hatOffset[0] || hatOff[1] !== s.hatOffset[1] || hatScale !== s.hatScale || fitChanged;
@@ -639,14 +661,14 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
     const patch: Partial<PetSettings> = { px, hatOffset: hatOff, hatScale };
     if (hasImage && fitChanged) {
       if (!url || !img || !safeImage(url)) return setErr("그림이 너무 복잡해서 저장하지 못했어요. 조금 줄여 보세요.");
-      Object.assign(patch, { image: url, imageOrig: orig, imageFit: fit });
+      Object.assign(patch, { image: url, imageOrig: img.src.startsWith("data:image/png") ? img.src : orig, imageFit: fit });
     }
     saveSettings(patch);
     onDone();
   };
   const nudge = (dx: number, dy: number) => {
     if (moveHat) setHatOff((h) => fitHat([h[0] + dx, h[1] + dy]));
-    else if (hasImage) setFit((f) => cleanFit({ ...f, x: f.x + dx, y: f.y + dy }));
+    else if (hasImage) setFit((f) => fitPic({ ...f, x: f.x + dx, y: f.y + dy }));
   };
 
   const slider = (label: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, text: string) => (
@@ -660,17 +682,6 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
 
   return (
     <div className="preview-wrap editing">
-      {hasImage && s.hat && (
-        <Segmented
-          label="끌어서 옮길 것"
-          value={target}
-          options={[
-            ["hat", "🎩 모자 옮기기"],
-            ["pet", "🖼️ 그림 옮기기"],
-          ]}
-          onChange={setTarget}
-        />
-      )}
       <div
         ref={boxRef}
         className={`preview hat-editing${drag ? " dragging" : ""}`}
@@ -679,6 +690,9 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
         aria-label="펫 편집: 끌거나 방향키로 옮기고 휠로 크기, Enter로 저장, Esc로 취소"
         onPointerDown={(e) => {
           if (e.button !== 0) return;
+          // 누른 곳이 모자면 모자, 그림이면 그림을 옮긴다 (기본 캐릭터는 바닥에 서 있어서 늘 모자)
+          const hit = hitRef.current?.(e.clientX, e.clientY);
+          if (hit === "hat" || (hit === "pet" && hasImage)) setTarget(hit);
           e.currentTarget.setPointerCapture(e.pointerId);
           setDrag({ x0: e.clientX, y0: e.clientY, hat: hatOff, fit });
         }}
@@ -687,7 +701,7 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
           const dx = e.clientX - drag.x0;
           const dy = e.clientY - drag.y0;
           if (moveHat) setHatOff(fitHat([drag.hat[0] + dx / view, drag.hat[1] + dy / view]));
-          else if (hasImage) setFit(cleanFit({ ...drag.fit, x: drag.fit.x + dx * picPerPx, y: drag.fit.y + dy * picPerPx }));
+          else if (hasImage) setFit(fitPic({ ...drag.fit, x: drag.fit.x + dx * picPerPx, y: drag.fit.y + dy * picPerPx }));
         }}
         onPointerUp={() => setDrag(null)}
         onPointerCancel={() => setDrag(null)}
@@ -695,7 +709,7 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
           // 휠: 옮기는 것의 크기 (모자면 모자, 그림이면 그림)
           const up = e.deltaY < 0;
           if (moveHat) setHatScale((v) => cleanHatScale(v + (up ? HAT_SCALE_STEP : -HAT_SCALE_STEP)));
-          else if (hasImage) setFit((f) => cleanFit({ ...f, zoom: f.zoom + (up ? 0.05 : -0.05) }));
+          else if (hasImage) setFit((f) => fitPic({ ...f, zoom: f.zoom + (up ? 0.05 : -0.05) }));
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") return save();
@@ -716,12 +730,19 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
           hatOffset={hatOff}
           hatScale={hatScale}
           minCells={s.hat ? editCells : undefined}
+          still
+          hitRef={hitRef}
+          showFrame={hasImage}
         />
       </div>
       <div className="hat-edit-bar" role="group" aria-label="펫 편집">
-        <span className="hint">{moveHat ? "모자를 끌어서 옮겨요" : hasImage ? "그림을 끌어서 옮겨요" : "모자를 쓰면 모자도 옮길 수 있어요"} · 휠로 크기</span>
+        <span className="hint">
+          {hasImage && s.hat ? "모자나 그림을 잡고 끌어서 옮겨요" : s.hat ? "모자를 끌어서 옮겨요" : hasImage ? "그림을 끌어서 옮겨요" : "모자를 쓰면 모자도 옮길 수 있어요"}
+          {(s.hat || hasImage) && <> · 휠: {moveHat ? "모자" : "그림"} 크기</>}
+        </span>
+        {hasImage && !moveHat && picStuck && <span className="hint">그림이 점선 틀을 꽉 채우면, 크기를 줄여야 틀 안에서 옮길 수 있어요</span>}
         {slider("펫 크기", px, PX_MIN, PX_MAX, 1, setPx, `${percentOf(px)}%`)}
-        {hasImage && slider("그림 확대", fit.zoom, FIT_ZOOM_MIN, FIT_ZOOM_MAX, 0.05, (v) => setFit((f) => cleanFit({ ...f, zoom: v })), `${Math.round(fit.zoom * 100)}%`)}
+        {hasImage && slider("그림 확대", fit.zoom, FIT_ZOOM_MIN, FIT_ZOOM_MAX, 0.05, (v) => setFit((f) => fitPic({ ...f, zoom: v })), `${Math.round(fit.zoom * 100)}%`)}
         {s.hat && slider("모자 크기", hatScale, HAT_SCALE_MIN, HAT_SCALE_MAX, HAT_SCALE_STEP, setHatScale, `${Math.round(hatScale * 100)}%`)}
         {px > EDIT_PX_MAX && <span className="hint">미리보기는 {percentOf(EDIT_PX_MAX)}%까지만 크게 보여요</span>}
         {err && <span className="error-inline">{err}</span>}

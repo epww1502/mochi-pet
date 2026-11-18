@@ -369,13 +369,15 @@ export function drawPet(
   hat: HatId | null = null,
   hatOffset: HatOffset = [0, 0],
   hatScale = 1,
+  /** "hat"이면 모자만 그린다 (편집할 때 누른 곳이 모자인지 알아보려고) */
+  only: "hat" | null = null,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   // 캔버스를 옆으로 늘렸으면 그 가운데에 선다
   const homeX = HOME_X + Math.round((ctx.canvas.width / px - CANVAS_W) / 2);
   const w = { x: homeX, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
   // 크기를 바꾼 모자는 자리만 표시해 두고(몸과 똑같이 눕히고 뒤집히게) 나중에 그 자리에 크게/작게 그린다
-  const scaled = !!hat && hatScale !== 1 && mood !== "slip";
+  const scaled = !!hat && (hatScale !== 1 || only === "hat") && mood !== "slip";
   let g = withHat(petGrid(character, color, mood, t, w.moving), hat, CHARACTERS[character].headY, hatOffset, scaled);
   if (mood === "sleep") g = squash(g);
   if (mood === "slip") g = rotateRight(g);
@@ -392,10 +394,10 @@ export function drawPet(
         return c.slice(HAT_MARK.length) || null; // 모자 밑에 가려졌던 몸
       }),
     );
-    paint(ctx, px, g, left, top);
+    if (only !== "hat") paint(ctx, px, g, left, top);
     if (x1 >= 0) paintScaledHat(ctx, px, hat, (left + (x0 + x1 + 1) / 2) * px, (top + y1 + 1) * px, hatScale, w.faceLeft);
-  } else paint(ctx, px, g, left, top);
-  drawExtras(ctx, px, w.x, H - 14 - hop(mood, t), mood, t);
+  } else if (only !== "hat") paint(ctx, px, g, left, top);
+  if (only !== "hat") drawExtras(ctx, px, w.x, H - 14 - hop(mood, t), mood, t);
 }
 export function drawImagePet(
   ctx: CanvasRenderingContext2D,
@@ -409,6 +411,7 @@ export function drawImagePet(
   hatScale = 1,
   /** 그림이 실제로 있는 자리(비율): 꼭대기, 가운데. 여백이 있어도 모자가 머리에 앉게 */
   content: { top: number; cx: number } = { top: 0, cx: 0.5 },
+  only: "hat" | null = null,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   // 캔버스를 옆으로 늘렸으면 그 가운데에 선다
@@ -427,7 +430,7 @@ export function drawImagePet(
   ctx.translate(cx, bottom);
   if (w.faceLeft) ctx.scale(-1, 1);
   if (mood === "slip") ctx.rotate(Math.PI / 2);
-  ctx.drawImage(img, -Math.round(fit.w / 2), -h, fit.w, h);
+  if (only !== "hat") ctx.drawImage(img, -Math.round(fit.w / 2), -h, fit.w, h);
   ctx.restore();
   if (hat && mood !== "slip") {
     // 그림 윗변에 모자 아랫줄이 걸치게 (+ 옮긴 만큼. 왼쪽을 보면 좌우도 반대로)
@@ -443,7 +446,7 @@ export function drawImagePet(
       paintScaledHat(ctx, px, hat, (left + mid) * px, (hatTop + y1 + 1) * px, hatScale, w.faceLeft);
     }
   }
-  drawExtras(ctx, px, w.x, top, mood, t);
+  if (only !== "hat") drawExtras(ctx, px, w.x, top, mood, t);
 }
 
 /**
