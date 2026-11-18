@@ -50,7 +50,7 @@ html[data-view="overlay"] body {
 }
 
 .slot {
-  width: calc(104px * var(--s));
+  width: calc(112px * var(--s));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -68,11 +68,18 @@ html[data-view="overlay"] body {
 
 .name {
   font-size: max(10px, calc(11px * var(--s))); /* 아주 작게여도 읽히게 */
-  font-weight: 600;
-  padding: calc(1px * var(--s)) calc(6px * var(--s));
-  border-radius: calc(6px * var(--s));
-  background: rgb(255 255 255 / 0.85);
-  max-width: calc(100px * var(--s));
+  font-weight: 700;
+  color: #fff;
+  /* 상자 없이 흰 글씨 + 어두운 외곽선: 밝은 배경, 어두운 배경 모두에서 읽힌다 */
+  text-shadow:
+    1px 0 rgb(0 0 0 / 0.55),
+    -1px 0 rgb(0 0 0 / 0.55),
+    0 1px rgb(0 0 0 / 0.55),
+    0 -1px rgb(0 0 0 / 0.55),
+    0 1px 3px rgb(0 0 0 / 0.5);
+  position: relative;
+  z-index: 1;
+  max-width: calc(120px * var(--s));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -427,10 +434,13 @@ html[data-view="settings"] body {
 
 .emote .from {
   font-size: max(9px, calc(10px * var(--s)));
-  font-weight: 600;
-  padding: 0 4px;
-  border-radius: 4px;
-  background: rgb(255 255 255 / 0.85);
+  font-weight: 700;
+  color: #fff;
+  text-shadow:
+    1px 0 rgb(0 0 0 / 0.55),
+    -1px 0 rgb(0 0 0 / 0.55),
+    0 1px rgb(0 0 0 / 0.55),
+    0 -1px rgb(0 0 0 / 0.55);
 }
 
 @keyframes float-up {
@@ -456,4 +466,88 @@ html[data-view="settings"] body {
     animation: none;
     transform: translateX(-50%);
   }
+}
+
+/* ---------- 상태 불: 이름표 왼쪽 작은 점 ---------- */
+.name {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3px * var(--s));
+}
+
+.light {
+  flex: none;
+  width: max(6px, calc(7px * var(--s)));
+  height: max(6px, calc(7px * var(--s)));
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.15);
+}
+
+.light.green {
+  background: #3fb950;
+  box-shadow: 0 0 4px #3fb950;
+}
+
+.light.orange {
+  background: #f0a020;
+  box-shadow: 0 0 4px #f0a020;
+}
+
+.light.red {
+  background: #e5484d;
+  box-shadow: 0 0 4px #e5484d;
+}
+
+.light.gray {
+  background: #a8a29e;
+}
+
+.name .state {
+  font-weight: 500;
+  color: rgb(255 255 255 / 0.85);
+}
+
+.name .state::before {
+  content: "· ";
+}
+
+/* 앱을 끈 친구: 흐리고 흑백 */
+.slot.offline .pet {
+  opacity: 0.45;
+  filter: grayscale(1);
+  cursor: default;
+}
+
+.slot.offline .name {
+  color: rgb(255 255 255 / 0.75);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* 이름표를 펫에 바짝: 캔버스 위쪽 4칸은 점프·하트용 빈칸이라 3칸만큼 겹쳐 머리 바로 위에 둔다 */
+.name.above {
+  margin-bottom: calc(-15px * var(--s));
+}
+
+/* 발 아래: 캔버스 맨 아랫줄이 발이라 바로 붙인다 */
+.name.below {
+  margin-top: calc(-1px * var(--s));
+}
+
+.settings button.pill {
+  background: var(--soft);
+  color: var(--ink);
+  border: 2px solid transparent;
+}
+
+.settings button.pill.on {
+  border-color: var(--line);
+  font-weight: 700;
 }

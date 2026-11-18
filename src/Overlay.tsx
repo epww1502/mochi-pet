@@ -5,9 +5,29 @@ import { useEffect, useRef, useState } from "react";
 import { wiggleDetector } from "./gestures";
 import { Bubble, PetCanvas } from "./Pet";
 import type { Mood, Motion } from "./sprites";
-import { EMOTES, EMOTE_MOTION, PX_DEFAULT, REPLIES, presenceToPeers, sanitizeReaction, supabase, useSettings, type Emote, type PeerState, type Reaction } from "./state";
+import {
+  AWAY_AFTER_MIN,
+  EMOTES,
+  EMOTE_MOTION,
+  PX_DEFAULT,
+  REPLIES,
+  buildRoster,
+  presenceToPeers,
+  sanitizeReaction,
+  statusLight,
+  supabase,
+  useSettings,
+  type Emote,
+  type Member,
+  type PeerState,
+  type Reaction,
+  type RosterPet,
+} from "./state";
 
-const AWAY_AFTER_SEC = 5 * 60;
+/** 한 줄에 세울 친구 수(창 너비 기준). 꺼진 친구는 남는 자리에만 */
+const MAX_FRIENDS = 5;
+/** 켜져 있는 동안 "마지막 접속"을 서버에 남기는 간격 */
+const HEARTBEAT_MS = 60_000;
 /** 보통 크기일 때 창 크기(논리 px). tauri.conf.json의 main 창과 같다. */
 const BASE_WIN = { w: 720, h: 240 };
 const CHAT_SHOW_MS = 7000;
@@ -30,8 +50,10 @@ function prune<T extends { at: number }>(rec: Record<string, T>, ms: number, now
 
 export function Overlay() {
   const s = useSettings();
-  const [away, setAway] = useState(false);
+  const [idleMin, setIdleMin] = useState(0);
   const [peers, setPeers] = useState<PeerState[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [now, setNow] = useState(() => Date.now()); // "3분 전" 같은 글자를 새로 고치는 시계
   const [chats, setChats] = useState<Record<string, Chat>>({});
   const [moods, setMoods] = useState<Record<string, MoodFx>>({});
   const [emotes, setEmotes] = useState<Record<string, EmoteFx>>({});
@@ -43,6 +65,7 @@ export function Overlay() {
 
   // 처음 실행: 화면 오른쪽 아래로. 이후엔 window-state 플러그인이 위치를 기억한다.
   useEffect(() => {
+    if (!s.name) invoke("open_settings");
     if (localStorage.getItem("mochi-pet-positioned")) return;
     (async () => {
       const w = getCurrentWindow();
@@ -55,7 +78,6 @@ export function Overlay() {
       );
       localStorage.setItem("mochi-pet-positioned", "1");
     })();
-    if (!s.name) invoke("open_settings");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -74,13 +96,17 @@ export function Overlay() {
     })();
   }, [scale]);
 
-  // 자리 비움: 키보드/마우스 입력이 5분 없으면
+  // 자리 비움(5분) / 잠수(30분): 키보드·마우스 입력이 없던 시간
   useEffect(() => {
-    const check = () => invoke<number>("idle_seconds").then((sec) => setAway(sec >= AWAY_AFTER_SEC));
+    const check = () => invoke<number>("idle_seconds").then((sec) => setIdleMin(Math.floor(sec / 60)));
     check();
     const id = setInterval(check, 15000);
     return () => clearInterval(id);
   }, []);
+
+  const away = idleMin >= AWAY_AFTER_MIN;
+  const busyRef = useRef(s.busy);
+  busyRef.current = s.busy;
 
   const me: PeerState = {
     id: s.deviceId,
@@ -89,6 +115,8 @@ export function Overlay() {
     color: s.color,
     image: s.image,
     status: draft ? "typing" : away ? "away" : "idle",
+    busy: s.busy,
+    idleMin: away ? idleMin : 0, // 자리에 있을 땐 0으로 둬서 presence를 1분마다 다시 보내지 않는다
   };
 
   const selfId = s.deviceId;
@@ -98,7 +126,7 @@ export function Overlay() {
       const emoji = r.emoji;
       setEmotes((p) => ({ ...p, [r.target]: { emoji, from: r.from, at } })); // 받은 펫 위로 이모티콘
       setMoods((p) => ({ ...p, [r.by]: { kind: EMOTE_MOTION[emoji], at } })); // 보낸 펫은 몸짓
-      if (r.target === selfId && r.by !== selfId) setReplyTo({ by: r.by, from: r.from, emoji });
+      if (r.target === selfId && r.by !== selfId && !busyRef.current) setReplyTo({ by: r.by, from: r.from, emoji });
     }
     if (r.kind === "dizzy" || r.kind === "happy") setMoods((p) => ({ ...p, [r.target]: { kind: r.kind as Motion, at } }));
   }
@@ -116,9 +144,11 @@ export function Overlay() {
   const roomId = s.room?.id;
   useEffect(() => {
     setPeers([]);
+    setMembers([]);
     if (!roomId) return;
     const ch = supabase.channel(`room:${roomId}`, { config: { presence: { key: s.deviceId }, broadcast: { self: true } } });
     ch.on("presence", { event: "sync" }, () => setPeers(presenceToPeers(ch.presenceState<PeerState>() as Record<string, PeerState[]>, s.deviceId)))
+      .on("presence", { event: "leave" }, () => loadRef.current()) // 누가 나가면 마지막 접속 시각을 새로 받아 온다
       .on("broadcast", { event: "chat" }, ({ payload }) => {
         const c = payload as { sender_id: string; body: string };
         setChats((prev) => ({ ...prev, [c.sender_id]: { ...c, at: Date.now() } }));
@@ -136,6 +166,39 @@ export function Overlay() {
       supabase.removeChannel(ch);
     };
   }, [roomId, s.deviceId]);
+
+  // 방 멤버(꺼진 친구 포함)와 마지막 접속 시각
+  async function loadMembers() {
+    if (!roomId) return;
+    const { data } = await supabase.rpc("list_members", { p_room: roomId });
+    if (data) setMembers(data as Member[]);
+  }
+  const loadRef = useRef(loadMembers);
+  loadRef.current = loadMembers;
+
+  // 켜져 있는 동안: 1분마다 "나 여기 있어" 남기고, 멤버 목록과 시계를 새로 고친다
+  const look = JSON.stringify([me.name, me.character, me.color, me.image]);
+  useEffect(() => {
+    if (!roomId) return;
+    const beat = async () => {
+      await supabase.rpc("touch_member", {
+        p_room: roomId,
+        p_device: s.deviceId,
+        p_name: me.name,
+        p_character: me.character,
+        p_color: me.color,
+        p_image: me.image,
+      });
+      await loadRef.current();
+      setNow(Date.now());
+    };
+    beat();
+    const id = setInterval(beat, HEARTBEAT_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, s.deviceId, look]);
+
+  const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS);
 
   // 내 상태가 바뀔 때마다 presence 갱신
   const meKey = JSON.stringify(me);
@@ -251,9 +314,11 @@ export function Overlay() {
       )}
       <div className="row">
         <PetSlot
-          peer={me}
+          peer={{ ...me, online: true, lastSeen: null }}
           chat={chats[me.id]}
           px={px}
+          now={now}
+          labelPos={s.labelPos}
           {...fx(me.id)}
           title="클릭: 채팅 · 끌기: 이동(흔들면 어지러워해요) · 머리 문지르기: 쓰다듬기 · 오른쪽 클릭: 설정"
           onMouseDown={onDown}
@@ -301,16 +366,18 @@ export function Overlay() {
             />
           )}
         </PetSlot>
-        {peers.map((p) => (
+        {roster.map((p) => (
           <PetSlot
             key={p.id}
             peer={p}
             chat={chats[p.id]}
             px={px}
+            now={now}
+            labelPos={s.labelPos}
             {...fx(p.id)}
-            title={`${p.name} · 클릭: 이모티콘 보내기 · 머리 문지르기: 쓰다듬기`}
-            onClick={() => setPicker(picker === p.id ? null : p.id)}
-            onMouseMove={(e) => onPetHover(p.id, e)}
+            title={p.online ? `${p.name} · 클릭: 이모티콘 보내기 · 머리 문지르기: 쓰다듬기` : `${p.name} · 오프라인`}
+            onClick={p.online ? () => setPicker(picker === p.id ? null : p.id) : undefined}
+            onMouseMove={p.online ? (e) => onPetHover(p.id, e) : undefined}
           >
             {picker === p.id ? (
               <div className="picker" data-hit role="toolbar" aria-label={`${p.name}에게 이모티콘 보내기`}>
@@ -338,14 +405,18 @@ function PetSlot({
   peer,
   chat,
   px,
+  now,
+  labelPos,
   mood,
   emote,
   children,
   ...handlers
 }: {
-  peer: PeerState;
+  peer: RosterPet;
   chat?: Chat;
   px: number;
+  now: number;
+  labelPos: "above" | "below";
   /** 흔들기/쓰다듬기 반응이 있으면 잠깐 이 표정 */
   mood?: MoodFx["kind"];
   emote?: EmoteFx;
@@ -353,8 +424,18 @@ function PetSlot({
 } & React.HTMLAttributes<HTMLDivElement>) {
   const text = chat?.body ?? (peer.status === "typing" ? "…" : null);
   const shown: Mood = mood ?? peer.status;
+  const light = statusLight(peer, now);
+  // 이름표: 상태 불 + 이름 (+ 자리 비움/바쁨/마지막 접속)
+  const label = (
+    <div className={`name ${labelPos}`} title={light.text || "온라인"}>
+      <span className={`light ${light.color}`} aria-hidden />
+      {peer.name}
+      {light.text && <span className="state">{light.text}</span>}
+      <span className="sr-only">{light.text || "온라인"}</span>
+    </div>
+  );
   return (
-    <div className="slot">
+    <div className={`slot${peer.online ? "" : " offline"}`}>
       {children ?? (text && <Bubble text={text} />)}
       {emote && (
         <div className="emote" key={emote.at} aria-live="polite">
@@ -362,10 +443,11 @@ function PetSlot({
           <span className="from">{emote.from}</span>
         </div>
       )}
+      {labelPos === "above" && label}
       <div className="pet" data-hit {...handlers}>
         <PetCanvas character={peer.character} color={peer.color} image={peer.image} mood={shown} px={px} />
       </div>
-      <div className="name">{peer.name}</div>
+      {labelPos === "below" && label}
     </div>
   );
 }

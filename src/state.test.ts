@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, presenceToPeers, pxOf, safeImage, sanitizeReaction, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, presenceToPeers, pxOf, safeImage, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -9,6 +9,8 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   color: "#fff",
   image: null,
   status: "idle",
+  busy: false,
+  idleMin: 0,
   ...extra,
 });
 
@@ -109,5 +111,51 @@ describe("이모티콘 답장", () => {
       expect(REPLIES[e], e).toHaveLength(3);
       for (const r of REPLIES[e]) expect(EMOTES, `${e} → ${r}`).toContain(r);
     }
+  });
+});
+
+const member = (id: string, name: string, lastSeen: string): Member => ({ device_id: id, name, character_id: "cat", color: "#ffd1dc", image: null, last_seen: lastSeen });
+
+describe("buildRoster", () => {
+  it("앱을 끈 친구는 흐린 펫으로 남고, 접속 중인 친구가 앞에 선다", () => {
+    const roster = buildRoster(
+      [peer("a", "가람")],
+      [member("a", "가람", "2026-11-18T00:00:00Z"), member("b", "나래", "2026-11-17T00:00:00Z"), member("me", "나", "2026-11-18T00:00:00Z")],
+      "me",
+      6,
+    );
+    expect(roster.map((p) => [p.name, p.online])).toEqual([["가람", true], ["나래", false]]);
+    expect(roster[1].lastSeen).toBe(Date.parse("2026-11-17T00:00:00Z"));
+  });
+
+  it("꺼진 친구는 최근에 들어온 순서, 창에 들어가는 만큼만", () => {
+    const roster = buildRoster([], [member("b", "나래", "2026-11-17T00:00:00Z"), member("c", "다온", "2026-11-18T00:00:00Z"), member("d", "라온", "2026-11-16T00:00:00Z")], "me", 2);
+    expect(roster.map((p) => p.name)).toEqual(["다온", "나래"]);
+  });
+});
+
+describe("statusLight", () => {
+  const now = Date.parse("2026-11-18T12:00:00Z");
+  const base = { online: true, lastSeen: null, busy: false, status: "idle" as const, idleMin: 0 };
+
+  it("켜져 있으면 초록, 바쁨이면 빨강", () => {
+    expect(statusLight(base, now).color).toBe("green");
+    expect(statusLight({ ...base, busy: true }, now)).toEqual({ color: "red", text: "바쁨" });
+  });
+
+  it("5분 넘게 입력이 없으면 자리 비움, 30분 넘으면 잠수 시간을 보여준다", () => {
+    expect(statusLight({ ...base, status: "away", idleMin: 7 }, now)).toEqual({ color: "orange", text: "자리 비움" });
+    expect(statusLight({ ...base, status: "away", idleMin: 40 }, now)).toEqual({ color: "orange", text: "잠수 40분" });
+    expect(statusLight({ ...base, status: "away", idleMin: 130 }, now)).toEqual({ color: "orange", text: "잠수 2시간" });
+  });
+
+  it("앱을 끈 친구는 회색 불에 마지막 접속 시간", () => {
+    expect(statusLight({ ...base, online: false, lastSeen: now - 3 * 3600_000 }, now)).toEqual({ color: "gray", text: "3시간 전" });
+  });
+});
+
+describe("ago", () => {
+  it("방금 / 분 / 시간 / 일", () => {
+    expect([ago(30_000), ago(5 * 60_000), ago(3 * 3600_000), ago(2 * 86400_000)]).toEqual(["방금", "5분 전", "3시간 전", "2일 전"]);
   });
 });

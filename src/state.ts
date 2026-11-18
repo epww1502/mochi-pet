@@ -21,6 +21,10 @@ export type Settings = {
   room: Room | null;
   /** 픽셀 한 칸의 화면 크기(px). 펫, 이름표, 말풍선, 창이 이 비율로 같이 커진다. */
   px: number;
+  /** 바쁨(방해 금지): 친구에게 빨간 불로 보이고, 답장 추천을 띄우지 않는다 */
+  busy: boolean;
+  /** 이름표를 펫 머리 위에 둘지 발 아래에 둘지 (내 화면의 모든 펫에 적용) */
+  labelPos: "above" | "below";
 };
 
 /** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
@@ -41,10 +45,10 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above" };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    return { ...base, ...saved, px: pxOf(saved) };
+    return { ...base, ...saved, px: pxOf(saved), labelPos: saved.labelPos === "below" ? "below" : "above" };
   } catch {
     return base;
   }
@@ -85,6 +89,9 @@ export type PeerState = {
   color: string;
   image: string | null;
   status: Mood; // online(idle) / away / typing
+  busy: boolean;
+  /** 입력 없이 지난 분. 자리 비움일 때만 의미가 있다 */
+  idleMin: number;
 };
 
 /** presence 상태(키별 배열)를 나를 뺀 친구 목록으로. 같은 사람이 여러 번 잡히면 마지막 것을 쓴다. */
@@ -105,7 +112,58 @@ function sanitizePeer(p: PeerState): PeerState {
     color: /^#[0-9a-f]{6}$/i.test(String(p.color)) ? p.color : "#ffe7c7",
     image: safeImage(p.image),
     status: p.status === "away" || p.status === "typing" ? p.status : "idle",
+    busy: p.busy === true,
+    idleMin: Number.isFinite(p.idleMin) ? Math.min(Math.max(Math.floor(p.idleMin), 0), 100_000) : 0,
   };
+}
+
+/** 방 멤버 목록(DB)에서 온 한 줄. 앱을 끈 친구도 여기 남아 있다. */
+export type Member = { device_id: string; name: string; character_id: string; color: string; image: string | null; last_seen: string };
+
+/** 화면에 세울 펫 하나: 지금 접속 중이면 presence 상태, 아니면 마지막 접속 시각 */
+export type RosterPet = PeerState & { online: boolean; lastSeen: number | null };
+
+/**
+ * 접속 중인 친구 + 꺼진 친구를 한 줄로. 접속 중인 친구가 먼저(이름순), 꺼진 친구는 최근 접속순.
+ * 창에 들어가는 만큼(max)만 세운다.
+ */
+export function buildRoster(peers: PeerState[], members: Member[], selfId: string, max: number): RosterPet[] {
+  const online = new Set(peers.map((p) => p.id));
+  const offline = members
+    .filter((m) => m.device_id !== selfId && !online.has(m.device_id))
+    .map((m) => ({
+      ...sanitizePeer({ id: m.device_id, name: m.name, character: m.character_id as CharacterId, color: m.color, image: m.image, status: "idle", busy: false, idleMin: 0 }),
+      online: false,
+      lastSeen: Date.parse(m.last_seen) || null,
+    }))
+    .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
+  return [...peers.map((p) => ({ ...p, online: true, lastSeen: null })), ...offline].slice(0, max);
+}
+
+/** "방금", "5분 전", "3시간 전", "2일 전" */
+export function ago(ms: number): string {
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "방금";
+  if (min < 60) return `${min}분 전`;
+  if (min < 60 * 24) return `${Math.floor(min / 60)}시간 전`;
+  return `${Math.floor(min / 60 / 24)}일 전`;
+}
+
+export const AWAY_AFTER_MIN = 5;
+export const AFK_AFTER_MIN = 30;
+
+/** 이름표 옆 상태 불: 초록 온라인, 주황 자리 비움/잠수, 빨강 바쁨, 회색 오프라인 */
+export function statusLight(p: Pick<RosterPet, "online" | "lastSeen" | "busy" | "status" | "idleMin">, now: number): { color: "green" | "orange" | "red" | "gray"; text: string } {
+  if (!p.online) return { color: "gray", text: p.lastSeen ? ago(now - p.lastSeen) : "오프라인" };
+  if (p.busy) return { color: "red", text: "바쁨" };
+  if (p.status === "away") {
+    if (p.idleMin >= AFK_AFTER_MIN) {
+      const h = Math.floor(p.idleMin / 60);
+      return { color: "orange", text: h >= 1 ? `잠수 ${h}시간` : `잠수 ${p.idleMin}분` };
+    }
+    return { color: "orange", text: "자리 비움" };
+  }
+  return { color: "green", text: "" };
 }
 
 /** 그림 한 장이 presence에 실리므로 크기를 제한한다. 64x64 PNG는 사진이라도 보통 10~20KB. */

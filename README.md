@@ -3,7 +3,7 @@
 화면 구석에 사는 픽셀 펫. 초대 코드로 친구들을 같은 방에 부르면, 서로의 펫이 나란히 서서 접속 상태를 보여주고 말풍선으로 채팅한다.
 
 - **친구**: 초대 코드 6자리로 같은 방에 들어오면 친구 펫이 내 펫 옆에 선다.
-- **상태**: 접속 중, 자리 비움(5분 동안 입력 없음, 조는 표정), 입력 중(…)이 실시간으로 보인다.
+- **상태**: 이름표 옆 불빛으로 보인다. 🟢 온라인 · 🟠 자리 비움(입력 없이 5분) / 잠수(30분~, "잠수 40분") · 🔴 바쁨(설정에서 켬, 답장 추천 끔) · ⚪ 오프라인(흐린 펫 + "3시간 전"). 입력 중이면 말풍선에 …
 - **채팅**: 내 펫을 클릭하고 입력, Enter. 말풍선으로 7초 뜨고, 설정 창에서 최근 대화를 볼 수 있다.
 - **캐릭터**: 찹쌀떡, 고양이, 곰, 유령 x 6가지 색. 또는 내 그림(PNG, JPG 등)을 가져와 쓴다. 64x64 이하 픽셀아트는 원본 그대로, 큰 그림은 64x64로 줄인다. 친구 화면에도 그대로 보인다.
 
@@ -37,6 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/epww1502/mochi-pet/main/install.sh 
 
 - 처음 켜면 설정 창이 뜬다: 닉네임, 캐릭터, 방 만들기 또는 초대 코드 입력.
 - 내 펫 클릭: 채팅 / 끌기: 이동(위치 기억) / 오른쪽 클릭: 설정 창.
+- 이름표는 설정에서 머리 위 / 발 아래 중에 고른다.
 - 친구 펫 클릭: 이모티콘 보내기 / 머리 문지르기: 쓰다듬기.
 - 메뉴 막대(트레이) 아이콘: 설정 열기, 종료.
 
@@ -44,7 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/epww1502/mochi-pet/main/install.sh 
 
 - `src-tauri/`: Rust. 투명 창 클릭 통과(펫 위에서만 클릭을 받음), 자리 비움 감지, 트레이, 중복 실행 방지.
 - `src/`: React. 펫 오버레이(`Overlay.tsx`), 설정 창(`Settings.tsx`), 픽셀 캐릭터(`sprites.ts`), Supabase 연결과 상태 로직(`state.ts`).
-- 서버: Supabase. 방과 메시지 테이블은 RLS로 잠겨 있고 `create_room` / `join_room` / `send_message` / `recent_messages` 함수로만 접근한다. 접속 상태와 그림은 Realtime Presence, 채팅 말풍선은 Broadcast.
+- 서버: Supabase. 방·메시지·멤버 테이블은 RLS로 잠겨 있고 `create_room` / `join_room` / `send_message` / `recent_messages` / `touch_member` / `list_members` / `leave_room` 함수로만 접근한다. 켜져 있는 동안 1분마다 마지막 접속 시각을 남긴다. 접속 상태와 그림은 Realtime Presence, 채팅 말풍선은 Broadcast.
 - `.github/workflows/release.yml`: `v*` 태그를 push하면 맥/윈도우 실행 파일을 Releases에 올린다.
 
 ## 개발

@@ -110,6 +110,19 @@ export function Settings() {
             </button>
           </div>
         </label>
+        <div className="label">이름표 위치</div>
+        <div className="choices" role="radiogroup" aria-label="이름표 위치">
+          {(
+            [
+              ["above", "머리 위"],
+              ["below", "발 아래"],
+            ] as const
+          ).map(([pos, label]) => (
+            <button key={pos} className={`pill${s.labelPos === pos ? " on" : ""}`} role="radio" aria-checked={s.labelPos === pos} onClick={() => saveSettings({ labelPos: pos })}>
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="label">색</div>
         <div className="choices">
           {COLORS.map((c) => (
@@ -123,6 +136,21 @@ export function Settings() {
             />
           ))}
         </div>
+      </section>
+
+      <section>
+        <h2>내 상태</h2>
+        <label className="check">
+          <input type="checkbox" checked={s.busy} onChange={(e) => saveSettings({ busy: e.target.checked })} />
+          <span>
+            <b>바쁨 (방해 금지)</b>
+            <br />
+            <span className="muted">친구에게 빨간 불로 보이고, 이모티콘을 받아도 답장 추천을 띄우지 않아요.</span>
+          </span>
+        </label>
+        <p className="muted small-left">
+          🟢 온라인 · 🟠 자리 비움(5분) / 잠수(30분~) · 🔴 바쁨 · ⚪ 오프라인. 자리 비움은 키보드와 마우스 입력으로 판단해요.
+        </p>
       </section>
 
       <section>
@@ -143,7 +171,14 @@ export function Settings() {
               >
                 {copied ? "복사됨" : "복사"}
               </button>
-              <button className="ghost" onClick={() => saveSettings({ room: null })}>
+              <button
+                className="ghost"
+                onClick={async () => {
+                  // 친구들 화면에서 내 회색 펫도 지운다 (실패해도 나가기는 한다)
+                  await supabase.rpc("leave_room", { p_room: s.room!.id, p_device: s.deviceId });
+                  saveSettings({ room: null });
+                }}
+              >
                 나가기
               </button>
             </div>
