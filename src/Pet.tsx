@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { contentBox } from "./picture";
+import { contentBox, type PictureFit } from "./picture";
 import type { HatId } from "./decor";
 import { CHARACTERS, canvasCells, drawImagePet, drawPet, type CharacterId, type HatOffset, type Mood, type Walk } from "./sprites";
 
@@ -18,10 +18,10 @@ type Props = {
   hatScale?: number;
   /** 캔버스를 적어도 이만큼(칸)은 크게: 모자를 고치는 동안 크기가 들쑥날쑥하지 않게 */
   minCells?: { cols: number; rows: number };
+  /** 그림 펫의 확대·위치 */
+  imageFit?: PictureFit;
   /** 움직이지 않게 (편집할 때: 누르려는 곳이 숨쉬며 들썩이지 않게) */
   still?: boolean;
-  /** 그림 펫의 그림 틀(14칸 네모)을 점선으로 보여 준다 (편집할 때) */
-  showFrame?: boolean;
   /** 화면 좌표가 모자 위인지, 펫(그림) 위인지 알려 주는 함수를 여기에 둔다 */
   hitRef?: React.MutableRefObject<((clientX: number, clientY: number) => "hat" | "pet" | null) | null>;
 };
@@ -37,14 +37,17 @@ function useDevicePixelRatio() {
   return dpr;
 }
 
-export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0], hatScale = 1, minCells, still = false, hitRef, showFrame = false }: Props) {
+export function PetCanvas({ character, color, image, mood, px = 5, walk = null, hat = null, hatOffset = [0, 0], hatScale = 1, minCells, still = false, hitRef, imageFit }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const dpr = useDevicePixelRatio();
   // 캔버스를 화면의 실제 픽셀로 그린다. 한 칸 = 정수 개의 실제 픽셀이라 늘려 보일 때 뭉개지지 않는다.
   const cell = Math.max(1, Math.round(px * dpr));
   const [dx, dy] = hatOffset; // 배열은 매번 새로 오니 숫자로 풀어서 그리기 루프 의존성에 쓴다
   // 모자를 높이 올렸거나 크게 했으면 캔버스를 위로 늘린다 (아래는 그대로라 펫 자리는 안 바뀐다)
-  const need = canvasCells(image ? 0 : CHARACTERS[character].headY, !!hat, [dx, dy], hatScale);
+  const fx = image ? (imageFit?.x ?? 0) : 0;
+  const fy = image ? (imageFit?.y ?? 0) : 0;
+  const fz = image ? (imageFit?.zoom ?? 1) : 1;
+  const need = canvasCells(image ? 0 : CHARACTERS[character].headY, !!hat, [dx, dy], hatScale, image ? { x: fx, y: fy, zoom: fz } : null);
   const rows = Math.max(need.rows, minCells?.rows ?? 0);
   const cols = Math.max(need.cols, minCells?.cols ?? 0);
   // 걷기 상태는 자주 바뀌므로 그리기 루프를 다시 만들지 않고 ref로 읽는다
@@ -60,24 +63,12 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
       if (img) {
         if (img.complete && img.naturalWidth) {
           content ??= contentBox(img);
-          drawImagePet(c, cell, img, mood, t, walkRef.current, hat, [dx, dy], hatScale, content, only);
+          drawImagePet(c, cell, img, mood, t, walkRef.current, hat, [dx, dy], hatScale, content, only, { x: fx, y: fy, zoom: fz });
         }
       } else drawPet(c, cell, character, color, mood, t, walkRef.current, hat, [dx, dy], hatScale, only);
     };
     const tick = () => {
       draw(ctx, still ? 0 : (performance.now() - born) / 1000);
-      if (showFrame && img) {
-        // 그림 틀: 펫 칸 가운데, 바닥에서 14칸 네모
-        const homeX = 2 + Math.round((cols - 20) / 2);
-        const cx = (homeX + 8) * cell;
-        const bottom = rows * cell;
-        ctx.save();
-        ctx.setLineDash([cell, cell]);
-        ctx.strokeStyle = "rgba(91, 58, 41, 0.45)";
-        ctx.lineWidth = Math.max(1, Math.round(cell / 4));
-        ctx.strokeRect(cx - 7 * cell + 0.5, bottom - 14 * cell + 0.5, 14 * cell - 1, 14 * cell - 1);
-        ctx.restore();
-      }
     };
     if (hitRef)
       hitRef.current = (clientX, clientY) => {
@@ -108,7 +99,7 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
     tick();
     const id = setInterval(tick, 80); // 초당 약 12번: 상시 실행이라 가볍게
     return () => clearInterval(id);
-  }, [character, color, image, mood, cell, hat, dx, dy, hatScale, rows, cols, still, hitRef, showFrame]);
+  }, [character, color, image, mood, cell, hat, dx, dy, hatScale, rows, cols, still, hitRef, fx, fy, fz]);
   return (
     <canvas
       ref={ref}

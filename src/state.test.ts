@@ -14,6 +14,7 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   hat: null,
   hatOffset: [0, 0],
   hatScale: 1,
+  imageFit: { x: 0, y: 0, zoom: 1 },
   tag: null,
   px: 5,
   msg: "",

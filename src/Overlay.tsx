@@ -228,6 +228,7 @@ export function Overlay() {
     hat: s.hat,
     hatOffset: s.hatOffset,
     hatScale: s.hatScale,
+    imageFit: s.imageFit,
     tag: s.tag,
     px: s.px,
     msg: s.statusMsg,
@@ -1512,6 +1513,7 @@ function PetSlot({
           hat={hat}
           hatOffset={peer.hatOffset}
           hatScale={peer.hatScale}
+          imageFit={peer.imageFit}
         />
         {gift && (
           <button

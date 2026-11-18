@@ -41,9 +41,7 @@ export type Settings = {
   color: string;
   /** 가져온 그림(64x64 이하 PNG data URL). 있으면 캐릭터 대신 쓴다. */
   image: string | null;
-  /** 칸 맞추기 전 원본 그림 (이 컴퓨터에만, 친구에겐 image만 간다) */
-  imageOrig: string | null;
-  /** 원본을 칸 안에서 옮기고 키운 값 */
+  /** 그림 확대·위치 (친구에게도 보낸다) */
   imageFit: PictureFit;
   room: Room | null;
   /** 들어갔던 방들. 여기서 골라 바로 바꿀 수 있다 */
@@ -118,14 +116,13 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, imageOrig: null, imageFit: { x: 0, y: 0, zoom: 1 }, room: null, rooms: [], px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, imageFit: { x: 0, y: 0, zoom: 1 }, room: null, rooms: [], px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
       ...base,
       ...saved,
       px: pxOf(saved),
-      imageOrig: typeof saved.imageOrig === "string" && saved.imageOrig.startsWith("data:image/png;base64,") ? saved.imageOrig : null,
       imageFit: cleanFit(saved.imageFit),
       room: isRoom(saved.room) ? saved.room : null,
       rooms: cleanRooms(saved.rooms, saved.room),
@@ -204,6 +201,8 @@ export type PeerState = {
   hatOffset: HatOffset;
   /** 모자 크기 (1 = 원래) */
   hatScale: HatScale;
+  /** 그림 펫의 확대·위치 (옛 버전 친구는 안 보낸다 → 그대로) */
+  imageFit: PictureFit;
   tag: TagId | null;
   /** 이 펫의 크기(픽셀 한 칸). 주인이 정한 크기로 모두의 화면에 보인다 */
   px: number;
@@ -238,6 +237,7 @@ function sanitizePeer(p: PeerState): PeerState {
     hat: isHat(p.hat) ? p.hat : null,
     hatOffset: cleanHatOffset(p.hatOffset, hatDyMin(character, !!image)),
     hatScale: cleanHatScale(p.hatScale),
+    imageFit: cleanFit(p.imageFit),
     tag: isTag(p.tag) ? p.tag : null,
     px: pxOf({ px: p.px }),
     msg: cleanMsg(p.msg),
@@ -291,6 +291,7 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
         hat: null,
         hatOffset: [0, 0],
         hatScale: 1,
+        imageFit: { x: 0, y: 0, zoom: 1 },
         tag: null,
         px: PX_DEFAULT,
         msg: "",

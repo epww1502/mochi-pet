@@ -1,3 +1,4 @@
+import type { PictureFit } from "./picture";
 import { HATS, HAT_COLORS, type HatId } from "./decor";
 
 // 16x13 픽셀 캐릭터. o=외곽선 b=몸통 s=반짝임 l=새싹 x=볼/귀 안쪽. 얼굴은 모든 캐릭터가 같은 자리(6~10행)에 그린다.
@@ -257,10 +258,27 @@ export function hatSidePad(dx: number, scale = 1): number {
   return Math.max(0, Math.ceil(Math.abs(dx) + 8 * scale - 10));
 }
 
-/** 펫 캔버스 크기(칸): 모자를 올리거나 옆으로 옮기거나 키운 만큼 늘린다 */
-export function canvasCells(headY: number, hat: boolean, [dx, dy]: HatOffset = [0, 0], scale = 1): { cols: number; rows: number } {
-  if (!hat) return { cols: CANVAS_W, rows: CANVAS_H };
-  return { cols: CANVAS_W + 2 * hatSidePad(dx, scale), rows: CANVAS_H + hatHeadroom(headY, dy, scale) };
+/**
+ * 펫 캔버스 크기(칸): 모자를 올리거나 옆으로 옮기거나 키운 만큼, 그림을 키우거나 옮긴 만큼 늘린다.
+ * 바닥은 그대로라 펫이 서 있는 자리는 안 바뀐다.
+ */
+export function canvasCells(headY: number, hat: boolean, [dx, dy]: HatOffset = [0, 0], scale = 1, pic: PictureFit | null = null): { cols: number; rows: number } {
+  let pad = 0;
+  let extra = 0;
+  let head = headY;
+  let hatX = dx;
+  if (pic) {
+    const top = 14 * pic.zoom - pic.y; // 바닥에서 그림 꼭대기까지 (y는 위로 올린 만큼 음수)
+    pad = Math.max(0, Math.ceil(7 * pic.zoom + Math.abs(pic.x) - CANVAS_W / 2));
+    extra = Math.max(0, Math.ceil(top + 1 - CANVAS_H)); // 숨쉬며 1칸 뜰 자리까지
+    head = 14 - top; // 모자는 그림 꼭대기에 앉는다 (펫 맨 윗줄 기준, 위로 넘으면 음수)
+    hatX = dx + pic.x; // 그림을 옮기면 모자도 따라간다
+  }
+  if (hat) {
+    pad = Math.max(pad, hatSidePad(hatX, scale));
+    extra = Math.max(extra, hatHeadroom(head, dy, scale));
+  }
+  return { cols: CANVAS_W + 2 * pad, rows: CANVAS_H + extra };
 }
 
 export function hatHeadroom(headY: number, dy: number, scale = 1): number {
@@ -412,6 +430,8 @@ export function drawImagePet(
   /** 그림이 실제로 있는 자리(비율): 꼭대기, 가운데. 여백이 있어도 모자가 머리에 앉게 */
   content: { top: number; cx: number } = { top: 0, cx: 0.5 },
   only: "hat" | null = null,
+  /** 그림 확대·위치 (펫 칸 기준) */
+  pic: PictureFit = { x: 0, y: 0, zoom: 1 },
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   // 캔버스를 옆으로 늘렸으면 그 가운데에 선다
@@ -419,14 +439,15 @@ export function drawImagePet(
   const w = { x: homeX, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
   const H = Math.round(ctx.canvas.height / px);
   const top = H - 14 - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
-  const fit = fitImage(img.naturalWidth, img.naturalHeight, 14 * px);
+  const fit = fitImage(img.naturalWidth, img.naturalHeight, Math.round(14 * px * pic.zoom));
+  const picX = w.faceLeft ? -pic.x : pic.x; // 왼쪽을 보면 옮긴 방향도 반대로
   const h = mood === "sleep" ? Math.round(fit.h / 2) : fit.h; // 잘 땐 납작
   ctx.save();
   ctx.imageSmoothingEnabled = fit.smooth;
   ctx.imageSmoothingQuality = "high";
   ctx.globalAlpha = mood === "away" ? 0.55 : 1;
-  const cx = (w.x + sway(mood, t) + 8) * px;
-  const bottom = (top + 14) * px;
+  const cx = (w.x + sway(mood, t) + 8 + picX) * px;
+  const bottom = (top + 14 + pic.y) * px;
   ctx.translate(cx, bottom);
   if (w.faceLeft) ctx.scale(-1, 1);
   if (mood === "slip") ctx.rotate(Math.PI / 2);
@@ -436,7 +457,7 @@ export function drawImagePet(
     // 그림 윗변에 모자 아랫줄이 걸치게 (+ 옮긴 만큼. 왼쪽을 보면 좌우도 반대로)
     const hatGrid = withHat([Array(16).fill(null)], hat, 0).slice(0, 4);
     const shift = Math.round(((content.cx - 0.5) * fit.w) / px); // 그림이 한쪽에 치우쳐 있으면 모자도 그쪽으로
-    const left = w.x + sway(mood, t) + (w.faceLeft ? -dx - shift : dx + shift);
+    const left = w.x + sway(mood, t) + picX + (w.faceLeft ? -dx - shift : dx + shift);
     const sleepDy = mood === "sleep" ? Math.round(dy / 2) : dy; // 잘 땐 그림이 반으로 납작해지니 옮긴 거리도 반
     const hatTop = Math.round((bottom - h + content.top * h) / px) - 3 + sleepDy;
     if (hatScale === 1) paint(ctx, px, w.faceLeft ? mirror(hatGrid) : hatGrid, left, hatTop);
