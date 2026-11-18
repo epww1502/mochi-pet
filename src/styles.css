@@ -37,11 +37,10 @@ html[data-view="overlay"] body {
   padding: 0 8px 4px;
 }
 
+/* 펫들은 화면 바닥 위 각자 자리(left)에 선다. 위치는 Overlay가 0.1초마다 정한다. */
 .row {
-  display: flex;
-  flex-direction: row-reverse; /* 내 펫이 맨 오른쪽 */
-  align-items: flex-end;
-  gap: 6px;
+  position: absolute;
+  inset: 0;
 }
 
 /* --s: 펫 크기 배율 (보통 = 1). 오버레이 안의 모든 크기가 따라 커진다. */
@@ -373,7 +372,9 @@ html[data-view="settings"] body {
 
 /* ---------- 반응: 이모티콘 고르기, 떠오르는 이모티콘 ---------- */
 .slot {
-  position: relative;
+  position: absolute;
+  bottom: 4px;
+  transition: left 0.1s linear;
 }
 
 .picker {
@@ -729,7 +730,6 @@ html[data-view="settings"] body {
 }
 
 .row {
-  position: relative;
   z-index: 1;
 }
 
@@ -754,10 +754,36 @@ html[data-view="settings"] body {
   }
 }
 
-/* 내 펫(맨 오른쪽) 위 칸은 창 밖으로 잘리지 않게 오른쪽에 맞춘다 */
-.row > .slot:first-child .picker,
-.row > .slot:first-child .chat-input {
+/* 화면 끝 가까이 있는 펫 위 칸은 창 밖으로 잘리지 않게 안쪽으로 맞춘다 */
+.slot.near-right .picker,
+.slot.near-right .chat-input,
+.slot.near-right .bubble {
   align-self: flex-end;
+}
+
+.slot.near-left .picker,
+.slot.near-left .chat-input,
+.slot.near-left .bubble {
+  align-self: flex-start;
+}
+
+/* 내 펫을 끄는 동안 창 전체가 마우스를 받는다 */
+.drag-catcher {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  cursor: grabbing;
+}
+
+.slot.tree {
+  left: 12px;
+}
+
+.toast {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 11;
 }
 
 /* ---------- 날씨 ---------- */

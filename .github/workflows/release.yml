@@ -30,7 +30,51 @@ jobs:
       - run: npm ci
       - if: matrix.test
         run: npm test
+      # 맥: 저장소 Secrets에 Apple 인증서·API 키가 있으면 서명하고 공증까지 받는다.
+      # 없으면 지금처럼 임시(애드혹) 서명만 한다 (tauri.conf.json의 signingIdentity "-").
+      - name: Apple 서명·공증 준비
+        if: runner.os == 'macOS'
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$IDENTITY" ]; then
+            {
+              echo "APPLE_CERTIFICATE=$CERT"
+              echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+            } >> "$GITHUB_ENV"
+            echo "Developer ID로 서명합니다"
+          else
+            echo "::warning::Apple 인증서가 없어 임시 서명만 합니다 (공증 없음)"
+          fi
+          if [ -n "$API_KEY_P8" ] && [ -n "$API_KEY" ] && [ -n "$API_ISSUER" ]; then
+            printf '%s' "$API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+            {
+              echo "APPLE_API_ISSUER=$API_ISSUER"
+              echo "APPLE_API_KEY=$API_KEY"
+              echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            } >> "$GITHUB_ENV"
+            echo "공증을 받습니다"
+          fi
       - run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
+      # 받는 파일은 dmg라서 dmg도 공증받고 확인서를 붙인다(stapling). 안의 앱은 위 빌드에서 이미 공증됐다.
+      - name: dmg 공증·확인
+        if: runner.os == 'macOS' && env.APPLE_API_KEY_PATH != ''
+        run: |
+          dmg=$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg | head -1)
+          xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg" >/dev/null
+          codesign -dv "$mnt"/*.app 2>&1 | grep -E "Authority=Developer ID|TeamIdentifier"
+          spctl -a -vv -t exec "$mnt"/*.app
+          hdiutil detach "$mnt" >/dev/null
       - if: matrix.test
         run: cargo test --manifest-path src-tauri/Cargo.toml
       - name: package

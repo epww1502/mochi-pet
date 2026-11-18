@@ -116,6 +116,8 @@ export type PeerState = {
   idleMin: number;
   hat: HatId | null;
   tag: TagId | null;
+  /** 이 펫의 크기(픽셀 한 칸). 주인이 정한 크기로 모두의 화면에 보인다 */
+  px: number;
 };
 
 /** presence 상태(키별 배열)를 나를 뺀 친구 목록으로. 같은 사람이 여러 번 잡히면 마지막 것을 쓴다. */
@@ -140,8 +142,12 @@ function sanitizePeer(p: PeerState): PeerState {
     idleMin: Number.isFinite(p.idleMin) ? Math.min(Math.max(Math.floor(p.idleMin), 0), 100_000) : 0,
     hat: isHat(p.hat) ? p.hat : null,
     tag: isTag(p.tag) ? p.tag : null,
+    px: pxOf({ px: p.px }),
   };
 }
+
+/** 접속 기록(1분마다)이 이 시간 안에 있으면 온라인. 컴퓨터를 끄거나 인터넷이 끊기면 3분 뒤 오프라인 */
+export const ONLINE_GRACE_MS = 3 * 60_000;
 
 /** 방 멤버 목록(DB)에서 온 한 줄. 앱을 끈 친구도 여기 남아 있다. */
 export type Member = { device_id: string; name: string; character_id: string; color: string; image: string | null; last_seen: string };
@@ -153,9 +159,9 @@ export type RosterPet = PeerState & { online: boolean; lastSeen: number | null }
  * 접속 중인 친구 + 꺼진 친구를 한 줄로. 접속 중인 친구가 먼저(이름순), 꺼진 친구는 최근 접속순.
  * 창에 들어가는 만큼(max)만 세운다.
  */
-export function buildRoster(peers: PeerState[], members: Member[], selfId: string, max: number): RosterPet[] {
+export function buildRoster(peers: PeerState[], members: Member[], selfId: string, max: number, now = Date.now()): RosterPet[] {
   const online = new Set(peers.map((p) => p.id));
-  const offline = members
+  const others = members
     .filter((m) => m.device_id !== selfId && !online.has(m.device_id))
     .map((m) => ({
       ...sanitizePeer({
@@ -169,12 +175,15 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
         idleMin: 0,
         hat: null,
         tag: null,
+        px: PX_DEFAULT,
       }),
       online: false,
       lastSeen: Date.parse(m.last_seen) || null,
     }))
-    .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
-  return [...peers.map((p) => ({ ...p, online: true, lastSeen: null })), ...offline].slice(0, max);
+    // 실시간 연결이 잠깐 끊겼어도 앱은 1분마다 접속을 남긴다. 최근에 남겼으면 컴퓨터·인터넷이 켜진 것으로 본다.
+    .map((p) => (p.lastSeen && now - p.lastSeen < ONLINE_GRACE_MS ? { ...p, online: true } : p))
+    .sort((a, b) => Number(b.online) - Number(a.online) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
+  return [...peers.map((p) => ({ ...p, online: true, lastSeen: null })), ...others].slice(0, max);
 }
 
 /** "방금", "5분 전", "3시간 전", "2일 전" */

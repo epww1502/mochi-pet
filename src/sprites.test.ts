@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CANVAS_W, mirror, petGrid, rotateRight, squash, wander } from "./sprites";
+import { mirror, petGrid, rotateRight, squash } from "./sprites";
 
 describe("펫 모양 바꾸기", () => {
   const g = petGrid("mochi", "#ffe7c7", "idle", 0);
@@ -31,22 +31,6 @@ describe("펫 모양 바꾸기", () => {
   });
 });
 
-describe("wander", () => {
-  it("아장아장 걸어도 캔버스 밖으로 나가지 않는다", () => {
-    for (const seed of [0, 1, 42, 996])
-      for (let t = 0; t < 30; t += 0.1) {
-        const w = wander(t, seed);
-        expect(w.x).toBeGreaterThanOrEqual(0);
-        expect(w.x + 16).toBeLessThanOrEqual(CANVAS_W);
-      }
-  });
-
-  it("친구마다 걷는 박자가 다르다", () => {
-    const a = Array.from({ length: 60 }, (_, i) => wander(i * 0.2, 1).x).join();
-    const b = Array.from({ length: 60 }, (_, i) => wander(i * 0.2, 2).x).join();
-    expect(a).not.toBe(b);
-  });
-});
 
 import { HATS, HAT_IDS, TAGS, available } from "./decor";
 import { withHat } from "./sprites";

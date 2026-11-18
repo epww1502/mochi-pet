@@ -5,11 +5,9 @@
   "windows": ["main", "settings"],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "core:window:allow-set-focus",
-    "core:window:allow-current-monitor",
-    "window-state:default"
+    "core:window:allow-current-monitor"
   ]
 }

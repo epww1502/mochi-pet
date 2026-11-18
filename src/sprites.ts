@@ -96,21 +96,40 @@ export const CHARACTERS = {
       "o..o...o..o....o",
     ],
   },
+  quokka: {
+    name: "쿼카", headY: 3,
+    feet: true,
+    rows: [
+      "................",
+      "..ooo......ooo..",
+      ".oxxbo....obxxo.",
+      ".oxbbooooobbbxo.",
+      "..obbbbbbbbbbo..",
+      ".obsbbbbbbbbbbo.",
+      "obsbbbbbbbbbbbbo",
+      "obbbbbbbbbbbbbbo",
+      "obbbbbbnnbbbbbbo",
+      "obbbbbbbbbbbbbbo",
+      ".obbbbbbbbbbbbo.",
+      "..oobbbbbbbboo..",
+      "....oooooooo....",
+    ],
+  },
 } as const;
 
 export type CharacterId = keyof typeof CHARACTERS;
 
-export const COLORS = ["#ffe7c7", "#ffd1dc", "#c8f0d8", "#cde3ff", "#e2d4ff", "#e8e8e8"] as const;
+export const COLORS = ["#ffe7c7", "#ffd1dc", "#c8f0d8", "#cde3ff", "#e2d4ff", "#e8e8e8", "#d9a877"] as const;
 
 const OUTLINE = "#5b3a29";
 const EYE = "#2b1b14";
 const CHEEK = "#f59aa0";
 const LEAF = "#5dbb63";
 
-/** 캔버스 크기(칸). 가로 22칸 = 펫 16칸 + 좌우로 걸어 다닐 6칸, 세로 18칸 = 펫 14칸 + 점프 여유 4칸 */
-export const CANVAS_W = 22;
+/** 캔버스 크기(칸). 가로 20칸 = 펫 16칸 + 휘청·뿔 여유 4칸, 세로 18칸 = 펫 14칸 + 점프 여유 4칸 */
+export const CANVAS_W = 20;
 export const CANVAS_H = 18;
-const HOME_X = 3; // 가운데
+const HOME_X = 2; // 가운데
 
 type Px = [number, number];
 /** 칸마다 색(없으면 null). grid[y][x] */
@@ -170,7 +189,7 @@ export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1): Grid
 /** 몸통 + 발 + 얼굴을 16x14 칸 색 격자로. stepping이면 발을 번갈아 든다(걷기). */
 export function petGrid(character: CharacterId, color: string, mood: Mood, t: number, stepping = false): Grid {
   const { rows, feet } = CHARACTERS[character];
-  const colors: Record<string, string> = { o: OUTLINE, b: color, s: "#ffffff", x: CHEEK, l: LEAF };
+  const colors: Record<string, string> = { o: OUTLINE, b: color, s: "#ffffff", x: CHEEK, l: LEAF, n: EYE };
   const g: Grid = Array.from({ length: 14 }, (_, y) => Array.from({ length: 16 }, (_, x) => colors[rows[y]?.[x] ?? "."] ?? null));
   if (feet) {
     const up = Math.floor(t * 8) % 2 === 0;
@@ -205,23 +224,8 @@ export function mirror(g: Grid): Grid {
   return g.map((row) => [...row].reverse());
 }
 
-/**
- * 온라인일 때 제자리 주변을 아장아장. 12초 주기: 쉬다가 걷고, 쉬다가 돌아온다.
- * seed로 친구마다 박자를 다르게. x는 0~6칸, 걷는 중엔 moving, 왼쪽으로 가면 faceLeft.
- */
-export function wander(t: number, seed: number): { x: number; moving: boolean; faceLeft: boolean } {
-  const T = 12;
-  const p = (((t + seed * 3.7) % T) + T) % T;
-  const target = (seed * 7) % 2 ? 0 : 6; // 왼쪽으로 놀러 갈지 오른쪽일지
-  const walk = (a: number, b: number, k: number) => Math.round(a + (b - a) * k);
-  if (p < 4) return { x: HOME_X, moving: false, faceLeft: false };
-  if (p < 6) return { x: walk(HOME_X, target, (p - 4) / 2), moving: true, faceLeft: target < HOME_X };
-  if (p < 9) return { x: target, moving: false, faceLeft: target < HOME_X };
-  if (p < 11) return { x: walk(target, HOME_X, (p - 9) / 2), moving: true, faceLeft: target > HOME_X };
-  return { x: HOME_X, moving: false, faceLeft: false };
-}
-
-const STAY = { x: HOME_X, moving: false, faceLeft: false };
+/** 걷는 중인지, 어느 쪽을 보는지 (화면 위 위치는 바깥에서 정한다) */
+export type Walk = { moving: boolean; faceLeft: boolean };
 
 /** 위로 뜨는 칸 수: 평소엔 숨쉬듯 1칸, 좋으면 콩콩, 신나면 높이, 놀라면 펄쩍 */
 export function hop(mood: Mood, t: number): number {
@@ -263,7 +267,7 @@ function paint(ctx: CanvasRenderingContext2D, px: number, g: Grid, left: number,
   );
 }
 
-/** 펫 하나 그리기. seed가 있으면 온라인일 때 걸어 다닌다(친구마다 박자가 다르게). null이면 제자리 */
+/** 펫 하나 그리기. walk가 있으면 그 방향을 보고 걸을 땐 발을 번갈아 든다 */
 export function drawPet(
   ctx: CanvasRenderingContext2D,
   px: number,
@@ -271,11 +275,11 @@ export function drawPet(
   color: string,
   mood: Mood,
   t: number,
-  seed: number | null = null,
+  walk: Walk | null = null,
   hat: HatId | null = null,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  const w = mood === "idle" && seed !== null ? wander(t, seed) : STAY;
+  const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
   let g = withHat(petGrid(character, color, mood, t, w.moving), hat, CHARACTERS[character].headY);
   if (mood === "sleep") g = squash(g);
   if (mood === "slip") g = rotateRight(g);
@@ -293,11 +297,11 @@ export function drawImagePet(
   img: HTMLImageElement,
   mood: Mood,
   t: number,
-  seed: number | null = null,
+  walk: Walk | null = null,
   hat: HatId | null = null,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  const w = mood === "idle" && seed !== null ? wander(t, seed) : STAY;
+  const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
   const top = CANVAS_H - 14 - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
   const fit = fitImage(img.naturalWidth, img.naturalHeight, 14 * px);
   const h = mood === "sleep" ? Math.round(fit.h / 2) : fit.h; // 잘 땐 납작

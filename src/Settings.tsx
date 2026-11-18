@@ -99,7 +99,7 @@ export function Settings() {
         <p className="muted small-left">큰 그림은 64x64 픽셀로 줄어들고, 친구에게도 보여요. 배경이 투명한 PNG 픽셀아트가 제일 잘 어울려요.</p>
         <label className="size">
           <span>
-            크기 <output>{percentOf(s.px)}%</output>
+            내 펫 크기 <output>{percentOf(s.px)}%</output> <span className="muted">· 친구 화면에도 이 크기로 보여요</span>
           </span>
           <div className="inline">
             <input

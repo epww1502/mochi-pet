@@ -4,11 +4,12 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { useEffect, useRef, useState } from "react";
 import { HATS, HAT_IDS, TAGS, type HatId, type OrnamentId, type SeasonId } from "./decor";
 import { wiggleDetector } from "./gestures";
-import { Bubble, PetCanvas, seedOf } from "./Pet";
+import { Bubble, PetCanvas } from "./Pet";
+import { newWalker, stepWalker, type Walker } from "./roam";
 import { CHARACTERS } from "./sprites";
 import { SeasonFx, Tree, type Ornament } from "./Seasons";
 import { WeatherFx, useWeather } from "./WeatherFx";
-import type { Mood, Motion } from "./sprites";
+import type { Mood, Motion, Walk } from "./sprites";
 import {
   AWAY_AFTER_MIN,
   EMOTES,
@@ -31,12 +32,16 @@ import {
   type Throwable,
 } from "./state";
 
-/** 한 줄에 세울 친구 수(창 너비 기준). 꺼진 친구는 남는 자리에만 */
-const MAX_FRIENDS = 5;
+/** 화면에 세울 친구 수. 꺼진 친구는 남는 자리에만 */
+const MAX_FRIENDS = 12;
 /** 켜져 있는 동안 "마지막 접속"을 서버에 남기는 간격 */
 const HEARTBEAT_MS = 60_000;
-/** 보통 크기일 때 창 크기(논리 px). tauri.conf.json의 main 창과 같다. */
-const BASE_WIN = { w: 720, h: 240 };
+/** 창 높이(보통 크기, 논리 px). 너비는 화면 전체 */
+const BASE_H = 280;
+/** 펫 한 마리 자리 너비(보통 크기, styles.css .slot과 같다) */
+const SLOT_W = 112;
+/** 걷는 속도(보통 크기 기준 px/초) */
+const WALK_SPEED = 32;
 const CHAT_SHOW_MS = 7000;
 const MOOD_SHOW_MS = 3000;
 const EMOTE_SHOW_MS = 2600;
@@ -92,39 +97,23 @@ export function Overlay() {
   const [draft, setDraft] = useState<string | null>(null); // null = 입력창 닫힘
   const [error, setError] = useState<string | null>(null);
   const [channel, setChannel] = useState<RealtimeChannel | null>(null); // 구독 완료된 방 채널
+  const [dragging, setDragging] = useState(false); // 내 펫을 집어서 끄는 중
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  channelRef.current = channel;
 
-  // 처음 실행: 화면 오른쪽 아래로. 이후엔 window-state 플러그인이 위치를 기억한다.
   useEffect(() => {
     if (!s.name) invoke("open_settings");
-    if (localStorage.getItem("mochi-pet-positioned")) return;
-    (async () => {
-      const w = getCurrentWindow();
-      const mon = await currentMonitor();
-      if (!mon) return;
-      const size = await w.outerSize();
-      const sf = mon.scaleFactor;
-      await w.setPosition(
-        new PhysicalPosition(mon.position.x + mon.size.width - size.width - 20 * sf, mon.position.y + mon.size.height - size.height - 90 * sf),
-      );
-      localStorage.setItem("mochi-pet-positioned", "1");
-    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 크기: 펫이 커지면 창도 같이 키우되, 오른쪽 아래 모서리는 제자리에 둔다
-  const px = s.px;
+  const px = s.px; // 내 펫 크기
   const scale = px / PX_DEFAULT;
+  const [stageW, setStageW] = useState(() => window.innerWidth);
   useEffect(() => {
-    (async () => {
-      const w = getCurrentWindow();
-      const [pos, size, sf] = await Promise.all([w.outerPosition(), w.outerSize(), w.scaleFactor()]);
-      const width = Math.round(BASE_WIN.w * scale * sf);
-      const height = Math.round(BASE_WIN.h * scale * sf);
-      if (width === size.width && height === size.height) return;
-      await w.setSize(new PhysicalSize(width, height));
-      await w.setPosition(new PhysicalPosition(pos.x + size.width - width, pos.y + size.height - height));
-    })();
-  }, [scale]);
+    const on = () => setStageW(window.innerWidth);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
 
   // 자리 비움(5분) / 잠수(30분): 키보드·마우스 입력이 없던 시간
   useEffect(() => {
@@ -149,7 +138,10 @@ export function Overlay() {
     idleMin: away ? idleMin : 0, // 자리에 있을 땐 0으로 둬서 presence를 1분마다 다시 보내지 않는다
     hat: s.hat,
     tag: s.tag,
+    px: s.px,
   };
+  const meRef = useRef(me);
+  meRef.current = me;
   const quietRef = useRef(s.quiet);
   quietRef.current = s.quiet;
   const winter = s.seasons.includes("winter");
@@ -230,7 +222,12 @@ export function Overlay() {
         if (r) applyReaction(r);
       })
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") setChannel(ch);
+        if (status === "SUBSCRIBED") {
+          setChannel(ch);
+          // 인터넷이 잠깐 끊겼다 다시 붙어도(맥 잠자기 포함) 같은 채널 객체라 위 state가 안 바뀐다.
+          // 그래서 여기서 바로 "나 여기 있어"를 다시 보낸다. 안 하면 켜져 있어도 친구 화면에서 사라진다.
+          ch.track(meRef.current);
+        }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setError("방에 연결하지 못했어요 (회사 네트워크가 웹소켓을 막을 수 있어요)");
       });
     return () => {
@@ -262,6 +259,7 @@ export function Overlay() {
         p_image: me.image,
       });
       await loadRef.current();
+      channelRef.current?.track(meRef.current); // 혹시 빠졌어도 1분마다 다시 알린다
       setNow(Date.now());
     };
     beat();
@@ -270,7 +268,62 @@ export function Overlay() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, s.deviceId, look]);
 
-  const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS);
+  const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS, now);
+  const winScale = Math.max(px, ...roster.map((p) => p.px)) / PX_DEFAULT;
+
+  // 창: 지금 모니터의 작업 영역(Dock·작업 표시줄 제외) 바닥에 화면 너비 전체로 깐다. 높이는 제일 큰 펫에 맞춘다.
+  useEffect(() => {
+    const place = async () => {
+      const w = getCurrentWindow();
+      const mon = await currentMonitor();
+      if (!mon) return;
+      const a = mon.workArea;
+      const h = Math.round(BASE_H * winScale * mon.scaleFactor);
+      await w.setSize(new PhysicalSize(a.size.width, h));
+      await w.setPosition(new PhysicalPosition(a.position.x, a.position.y + a.size.height - h));
+    };
+    place();
+    const un = getCurrentWindow().onScaleChanged(() => place()); // 해상도가 다른 모니터로 옮겨지면 다시
+    return () => void un.then((f) => f());
+  }, [winScale]);
+
+
+  // 펫마다 화면 바닥을 따라 따로 걷는다 (0.1초마다). 반응 중·채팅 중·자리 비움이면 제자리.
+  const walkers = useRef(new Map<string, Walker>());
+  const [, setWalkTick] = useState(0);
+  const walkState = useRef({ me, roster, moods, bigs, gifts, picker, busyMe: false });
+  walkState.current = { me, roster, moods, bigs, gifts, picker, busyMe: draft !== null || !!replyTo || !!got || dragging };
+  useEffect(() => {
+    let last = performance.now();
+    const id = setInterval(() => {
+      const t = performance.now();
+      const dt = Math.min((t - last) / 1000, 0.5);
+      last = t;
+      const now = Date.now();
+      const st = walkState.current;
+      const pets: RosterPet[] = [{ ...st.me, online: true, lastSeen: null }, ...st.roster];
+      for (const [i, p] of pets.entries()) {
+        const k = p.px / PX_DEFAULT; // 펫마다 크기가 달라 자리 폭과 걸음도 다르다
+        const maxX = Math.max(0, window.innerWidth - SLOT_W * k);
+        let w = walkers.current.get(p.id);
+        // 처음 보는 펫: 나는 오른쪽, 친구는 고르게 흩어서
+        if (!w) walkers.current.set(p.id, (w = newWalker(i === 0 ? maxX * 0.85 : ((i * 0.37) % 0.8) * maxX, now)));
+        const mine = p.id === st.me.id;
+        const canWalk = p.online && p.status === "idle" && !st.moods[p.id] && !st.bigs[p.id] && !st.gifts[p.id] && st.picker !== p.id && !(mine && st.busyMe);
+        if (mine && dragging) continue; // 끄는 중엔 손이 정한다
+        walkers.current.set(p.id, stepWalker(w, dt, now, maxX, WALK_SPEED * k, canWalk));
+      }
+      setWalkTick((n) => (n + 1) % 1_000_000);
+    }, 100);
+    return () => clearInterval(id);
+  }, [dragging]);
+  const posOf = (id: string, petPx: number) => {
+    const k = petPx / PX_DEFAULT;
+    const w = walkers.current.get(id);
+    const x = w?.x ?? 0;
+    const edge = x < 150 * k ? " near-left" : x > stageW - (SLOT_W + 150) * k ? " near-right" : "";
+    return { x, walk: w ? { moving: w.moving, faceLeft: w.faceLeft } : null, edge };
+  };
 
   // 내 상태가 바뀔 때마다 presence 갱신
   const meKey = JSON.stringify(me);
@@ -292,15 +345,6 @@ export function Overlay() {
     }, 250);
     return () => clearInterval(id);
   }, []);
-
-  // 흔들기: 내 펫을 끌고 좌우로 빠르게 흔들면(창이 왔다 갔다) 어지러워한다
-  useEffect(() => {
-    const shaken = wiggleDetector({ need: 4, windowMs: 1500, minStep: 6, cooldownMs: 3000 });
-    const un = getCurrentWindow().onMoved(({ payload }) => {
-      if (shaken(payload.x, Date.now())) reactRef.current(s.deviceId, "dizzy");
-    });
-    return () => void un.then((f) => f());
-  }, [s.deviceId]);
 
   // 쓰다듬기: 펫 머리(위쪽 60%) 위에서 버튼을 누르지 않고 좌우로 문지르면 좋아한다
   const petting = useRef(new Map<string, ReturnType<typeof wiggleDetector>>());
@@ -360,36 +404,60 @@ export function Overlay() {
     await getCurrentWindow().setFocus(); // 클릭 통과 창이라 입력하려면 포커스를 가져와야 한다
   }
 
-  // 내 펫: 클릭하면 채팅, 끌면 창 이동
-  const drag = useRef<{ x: number; y: number } | null>(null);
-  const onDown = (e: React.MouseEvent) => {
-    if (e.button === 0) drag.current = { x: e.screenX, y: e.screenY };
-  };
-  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const d = drag.current;
-    if (d && Math.hypot(e.screenX - d.x, e.screenY - d.y) > 4) {
-      drag.current = null;
-      getCurrentWindow().startDragging();
-    }
-    onPetHover(me.id, e);
-  };
-  // 한 번 클릭은 채팅, 더블클릭은 크게 인사. 두 번째 클릭을 잠깐 기다렸다가 정한다.
+  // 내 펫: 클릭하면 채팅, 더블클릭하면 크게 인사, 집어서 끌면 옮기기(좌우로 흔들면 어지러워함)
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onUp = () => {
-    if (drag.current) {
-      if (clickTimer.current) {
-        clearTimeout(clickTimer.current);
+  function onTap() {
+    if (clickTimer.current) {
+      clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+      react(me.id, "big");
+    } else {
+      clickTimer.current = setTimeout(() => {
         clickTimer.current = null;
-        react(me.id, "big");
-      } else {
-        clickTimer.current = setTimeout(() => {
-          clickTimer.current = null;
-          openChat();
-        }, 260);
-      }
+        openChat();
+      }, 260);
     }
-    drag.current = null;
+  }
+  const press = useRef<{ x: number; offset: number; moved: boolean } | null>(null);
+  const onDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    press.current = { x: e.clientX, offset: e.clientX - (walkers.current.get(me.id)?.x ?? 0), moved: false };
+    setDragging(true);
+    // 펫 밖으로 커서가 나가도 놓치지 않게 잠깐 창 전체가 클릭을 받는다
+    invoke("set_hit_rects", { rects: [[0, 0, window.innerWidth, window.innerHeight]] });
   };
+  useEffect(() => {
+    if (!dragging) return;
+    const shaken = wiggleDetector({ need: 4, windowMs: 1500, minStep: 6, cooldownMs: 3000 });
+    const move = (e: MouseEvent) => {
+      const p = press.current;
+      if (!p) return;
+      if (!p.moved && Math.abs(e.clientX - p.x) > 4) p.moved = true;
+      if (!p.moved) return;
+      const w = walkers.current.get(selfId);
+      const maxX = Math.max(0, window.innerWidth - SLOT_W * scale);
+      const x = Math.min(Math.max(e.clientX - p.offset, 0), maxX);
+      if (w) walkers.current.set(selfId, { ...w, x, target: x, restUntil: Date.now() + 6000, moving: true, faceLeft: e.movementX < 0 });
+      if (shaken(e.clientX, Date.now())) reactRef.current(selfId, "dizzy");
+    };
+    const up = () => {
+      const p = press.current;
+      press.current = null;
+      setDragging(false);
+      const w = walkers.current.get(selfId);
+      if (w) walkers.current.set(selfId, { ...w, moving: false });
+      if (p && !p.moved) onTapRef.current();
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragging]);
+  const onTapRef = useRef(onTap);
+  onTapRef.current = onTap;
 
   // 친구 펫: 한 번 누르면 이모티콘·던지기 창, 0.7초 안에 세 번 누르면 콕 찌르기
   const taps = useRef(new Map<string, number[]>());
@@ -463,14 +531,13 @@ export function Overlay() {
         <PetSlot
           peer={{ ...me, online: true, lastSeen: null }}
           chat={chats[me.id]}
-          px={px}
           now={now}
           labelPos={s.labelPos}
           {...fx(me.id)}
-          title="클릭: 채팅 · 끌기: 이동(흔들면 어지러워해요) · 머리 문지르기: 쓰다듬기 · 오른쪽 클릭: 설정"
+          {...posOf(me.id, px)}
+          title="클릭: 채팅 · 더블클릭: 크게 인사 · 끌기: 옮기기(흔들면 어지러워해요) · 머리 문지르기: 쓰다듬기 · 오른쪽 클릭: 설정"
           onMouseDown={onDown}
-          onMouseMove={onMove}
-          onMouseUp={onUp}
+          onMouseMove={(e) => onPetHover(me.id, e)}
           onContextMenu={(e) => {
             e.preventDefault();
             invoke("open_settings");
@@ -539,10 +606,10 @@ export function Overlay() {
             key={p.id}
             peer={p}
             chat={chats[p.id]}
-            px={px}
             now={now}
             labelPos={s.labelPos}
             {...fx(p.id)}
+            {...posOf(p.id, p.px)}
             title={p.online ? `${p.name} · 클릭: 이모티콘·던지기 · 세 번 클릭: 콕 찌르기 · 머리 문지르기: 쓰다듬기` : `${p.name} · 오프라인`}
             onClick={p.online ? () => onFriendClick(p.id) : undefined}
             onMouseMove={p.online ? (e) => onPetHover(p.id, e) : undefined}
@@ -592,6 +659,7 @@ export function Overlay() {
           <Tree ornaments={ornaments} px={px} open={treeOpen} onToggle={() => setTreeOpen((v) => !v)} onHang={hang} />
         )}
       </div>
+      {dragging && <div className="drag-catcher" data-hit aria-hidden />}
       <SeasonFx seasons={s.seasons as SeasonId[]} />
       <WeatherFx weather={weather} scale={scale} />
       {shots.map((shot) => (
@@ -605,7 +673,7 @@ export function Overlay() {
 function Flying({ shot }: { shot: Shot }) {
   const ref = useRef<HTMLDivElement>(null);
   const { a, b } = shot;
-  const peak = Math.min(a.y, b.y) - 70 - Math.abs(b.x - a.x) * 0.15; // 멀수록 높이
+  const peak = Math.max(24, Math.min(a.y, b.y) - 70 - Math.abs(b.x - a.x) * 0.15); // 멀수록 높이, 창 위로는 안 넘게
   const c = { x: (a.x + b.x) / 2, y: peak * 2 - (a.y + b.y) / 2 }; // 2차 베지어 조절점(꼭대기가 peak)
   const at = (k: number) => ({
     x: (1 - k) ** 2 * a.x + 2 * (1 - k) * k * c.x + k ** 2 * b.x,
@@ -635,7 +703,6 @@ function Flying({ shot }: { shot: Shot }) {
 function PetSlot({
   peer,
   chat,
-  px,
   now,
   labelPos,
   mood,
@@ -644,12 +711,14 @@ function PetSlot({
   gift,
   onOpenGift,
   badge,
+  x,
+  walk,
+  edge,
   children,
   ...handlers
 }: {
   peer: RosterPet;
   chat?: Chat;
-  px: number;
   now: number;
   labelPos: "above" | "below";
   /** 흔들기/쓰다듬기 반응이 있으면 잠깐 이 표정 */
@@ -663,6 +732,11 @@ function PetSlot({
   onOpenGift?: (g: { from: string; hat: HatId }) => void;
   /** 이름표 옆 작은 버튼 (조용히 모드의 안 읽은 채팅 수) */
   badge?: React.ReactNode;
+  /** 화면 위 위치(px)와 걷는 모습 */
+  x: number;
+  walk: Walk | null;
+  /** 화면 끝 가까이면 위에 뜨는 칸을 안쪽으로 맞춘다 */
+  edge: string;
   children?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const text = chat?.body ?? (peer.status === "typing" ? "…" : null);
@@ -683,7 +757,11 @@ function PetSlot({
     </div>
   );
   return (
-    <div className={`slot${peer.online ? "" : " offline"}${big ? " big" : ""}${hatTall ? " hatted" : ""}`} data-peer={peer.id}>
+    <div
+      className={`slot${peer.online ? "" : " offline"}${big ? " big" : ""}${hatTall ? " hatted" : ""}${edge}`}
+      data-peer={peer.id}
+      style={{ left: x, "--s": peer.px / PX_DEFAULT } as React.CSSProperties}
+    >
       {children ?? (text && <Bubble text={text} />)}
       {emote && (
         <div className="emote" key={emote.at} aria-live="polite">
@@ -698,8 +776,8 @@ function PetSlot({
           color={peer.color}
           image={peer.image}
           mood={shown}
-          px={px}
-          walkSeed={peer.online ? seedOf(peer.id) : null}
+          px={peer.px}
+          walk={walk}
           hat={peer.hat}
         />
         {gift && (

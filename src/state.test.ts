@@ -13,10 +13,16 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   idleMin: 0,
   hat: null,
   tag: null,
+  px: 5,
   ...extra,
 });
 
 describe("presenceToPeers", () => {
+  it("친구가 정한 펫 크기를 쓰되, 범위 밖이면 맞춘다", () => {
+    const peers = presenceToPeers({ a: [peer("a", "가람", { px: 10 })], b: [peer("b", "나래", { px: 999 })] }, "me");
+    expect(peers.map((p) => p.px)).toEqual([10, 12]);
+  });
+
   it("내 펫은 친구 목록에 다시 나오지 않는다", () => {
     const peers = presenceToPeers({ me: [peer("me", "나")], a: [peer("a", "가람")] }, "me");
     expect(peers.map((p) => p.id)).toEqual(["a"]);
@@ -65,7 +71,7 @@ describe("캐릭터 그림", () => {
     for (const [id, c] of Object.entries(CHARACTERS)) {
       expect(c.rows, id).toHaveLength(13);
       c.rows.forEach((r, y) => expect(r.length, `${id} ${y}행`).toBe(16));
-      for (let y = 6; y <= 10; y++) for (let x = 3; x <= 12; x++) expect(c.rows[y][x], `${id} (${x},${y})`).toMatch(/[bs]/);
+      for (let y = 6; y <= 10; y++) for (let x = 3; x <= 12; x++) expect(c.rows[y][x], `${id} (${x},${y})`).toMatch(/[bsn]/); // n = 코
     }
   });
 });
@@ -135,12 +141,19 @@ describe("이모티콘 답장", () => {
 const member = (id: string, name: string, lastSeen: string): Member => ({ device_id: id, name, character_id: "cat", color: "#ffd1dc", image: null, last_seen: lastSeen });
 
 describe("buildRoster", () => {
+  it("실시간 연결이 잠깐 끊겨도 1분 전에 접속 기록이 있으면 온라인으로 본다", () => {
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const roster = buildRoster([], [member("b", "나래", "2026-11-18T11:59:00Z"), member("c", "다온", "2026-11-18T11:50:00Z")], "me", 6, now);
+    expect(roster.map((p) => [p.name, p.online])).toEqual([["나래", true], ["다온", false]]);
+  });
+
   it("앱을 끈 친구는 흐린 펫으로 남고, 접속 중인 친구가 앞에 선다", () => {
     const roster = buildRoster(
       [peer("a", "가람")],
       [member("a", "가람", "2026-11-18T00:00:00Z"), member("b", "나래", "2026-11-17T00:00:00Z"), member("me", "나", "2026-11-18T00:00:00Z")],
       "me",
       6,
+      Date.parse("2026-11-18T12:00:00Z"),
     );
     expect(roster.map((p) => [p.name, p.online])).toEqual([["가람", true], ["나래", false]]);
     expect(roster[1].lastSeen).toBe(Date.parse("2026-11-17T00:00:00Z"));
