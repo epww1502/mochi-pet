@@ -1583,3 +1583,17 @@ html[data-view="settings"] body {
   cursor: pointer;
   color: #8a7d72;
 }
+
+/* 맨 위 편집 버튼 (미리보기 옆) */
+.settings button.edit-pet {
+  margin-left: auto;
+  flex: none;
+  align-self: center;
+}
+.preview-wrap.editing {
+  gap: 8px;
+}
+.preview-wrap.editing .hat-edit-bar {
+  width: 100%;
+  align-items: center;
+}

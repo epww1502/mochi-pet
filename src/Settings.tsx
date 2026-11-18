@@ -25,8 +25,8 @@ export function Settings() {
   const [placeQ, setPlaceQ] = useState("");
   const [found, setFound] = useState<(Place & { detail: string })[] | null>(null);
   const weather = useWeather(s.weatherOn, s.place);
-  const [hatEdit, setHatEdit] = useState(false);
-  const [picEdit, setPicEdit] = useState(false);
+  // 편집: 미리보기에서 펫(크기·그림 위치)과 모자(위치·크기)를 같이 고친다. 무엇을 끌지 처음 고른다.
+  const [edit, setEdit] = useState<EditTarget | null>(null);
   // 최근 대화는 맨 아래(가장 최근)가 보이게. 새 메시지가 오면 다시 아래로.
   const historyRef = useRef<HTMLUListElement>(null);
   const lastId = history[history.length - 1]?.id;
@@ -74,16 +74,25 @@ export function Settings() {
     <main className="settings">
       <header className="settings-head">
         <div className="profile">
-          {picEdit && s.image ? (
-            <PictureFitEditor s={s} onDone={() => setPicEdit(false)} />
+          {edit ? (
+            <PetEditor s={s} start={edit} onDone={() => setEdit(null)} />
           ) : (
-            <PreviewWithHatDrag s={s} editing={hatEdit} setEditing={setHatEdit} />
+            <>
+              <div className="preview-wrap">
+                <div className="preview">
+                  <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={s.hatOffset} hatScale={s.hatScale} />
+                </div>
+              </div>
+              <div className="profile-text">
+                <b>{s.name || "이름 없음"}</b>
+                <span className="muted">{s.room ? `🏠 ${s.room.name}` : "아직 방에 안 들어갔어요"}</span>
+                {s.statusMsg && <span className="muted">💬 {s.statusMsg}</span>}
+              </div>
+              <button className="ghost edit-pet" onClick={() => setEdit(s.hat ? "hat" : "pet")} title="펫 크기·그림 위치와 모자 위치·크기를 한 번에">
+                ✏️ 편집
+              </button>
+            </>
           )}
-          <div className="profile-text">
-            <b>{s.name || "이름 없음"}</b>
-            <span className="muted">{s.room ? `🏠 ${s.room.name}` : "아직 방에 안 들어갔어요"}</span>
-            {s.statusMsg && <span className="muted">💬 {s.statusMsg}</span>}
-          </div>
         </div>
         <nav className="tabs" role="tablist" aria-label="설정 메뉴">
           {TABS.map(([id, icon, label]) => (
@@ -140,7 +149,7 @@ export function Settings() {
                     setMsg(null);
                     try {
                       const url = await importImage(file);
-                      setPicEdit(false);
+                      setEdit(null);
                       // 머리 위치가 달라지니 모자도 제자리로
                       saveSettings({ image: url, imageOrig: url, imageFit: FIT_DEFAULT, hatOffset: [0, 0] });
                     } catch {
@@ -151,14 +160,8 @@ export function Settings() {
               </label>
             </div>
             {msg && tab === "pet" && <p className="error">{msg}</p>}
-            {s.image && !picEdit && (
-              <button
-                className="ghost edit-hat"
-                onClick={() => {
-                  setHatEdit(false);
-                  setPicEdit(true);
-                }}
-              >
+            {s.image && !edit && (
+              <button className="ghost edit-hat" onClick={() => setEdit("pet")}>
                 ✏️ 그림 위치·크기 맞추기
               </button>
             )}
@@ -229,8 +232,8 @@ export function Settings() {
                 </button>
               ))}
             </div>
-            {s.hat && !hatEdit && (
-              <button className="ghost edit-hat" onClick={() => setHatEdit(true)}>
+            {s.hat && !edit && (
+              <button className="ghost edit-hat" onClick={() => setEdit("hat")}>
                 ✏️ 모자 위치·크기 조절
               </button>
             )}
@@ -582,212 +585,154 @@ function Segmented<T extends string | number>({ label, value, options, onChange 
   );
 }
 
-const PREVIEW_PX = 5; // 미리보기 한 칸 = 화면 5px
+const PREVIEW_PX = 5; // 미리보기 한 칸 = 화면 5px (100% 크기와 같다)
+const EDIT_PX_MAX = 8; // 편집 중엔 실제 크기로 보여 주되, 창에 들어가게 160%까지만
+
+type EditTarget = "pet" | "hat";
 
 /**
- * 설정 맨 위 미리보기 + 모자 위치·크기 조절.
- * "모자 위치·크기 조절"을 누르면 미리보기에서 모자를 끌어(또는 방향키로) 옮기고 크기를 골라 볼 수 있고, 저장을 눌러야 바뀐다.
- * 그래서 고치는 동안은 친구에게 아무것도 보내지 않고, 취소하면 그대로다.
+ * 펫 편집: 미리보기(점선 사각형) 안에서 펫과 모자를 같이 고친다.
+ * - 끌기: 위에서 고른 것(모자 / 그림)을 옮긴다. 기본 캐릭터는 바닥에 서 있어서 모자만 옮긴다.
+ * - 슬라이더·휠: 펫 크기, 그림 확대, 모자 크기
+ * 저장을 눌러야 한 번에 바뀌고(친구에게도), 취소하면 그대로다.
+ * 고치는 동안 미리보기는 가장 크게 바뀔 때 크기로 고정한다. 커졌다 줄었다 하면 옮긴 게 제자리처럼 보인다.
  */
-function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editing: boolean; setEditing: (v: boolean) => void }) {
-  const [draft, setDraft] = useState<HatOffset>(s.hatOffset);
-  const [scaleDraft, setScaleDraft] = useState<HatScale>(s.hatScale);
-  const [drag, setDrag] = useState<{ x0: number; y0: number; from: HatOffset } | null>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
-  // 고치기 시작할 때마다 지금 저장된 모자에서 시작하고, 방향키를 바로 쓸 수 있게 포커스
-  useEffect(() => {
-    if (!editing) return;
-    setDraft(s.hatOffset);
-    setScaleDraft(s.hatScale);
-    boxRef.current?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing]);
-  // 모자를 벗으면 고치기도 끝
-  useEffect(() => {
-    if (!s.hat) setEditing(false);
-  }, [s.hat, setEditing]);
-
-  const fit = (v: [number, number]) => cleanHatOffset(v, hatDyMin(s.character, !!s.image));
-  const editCells = canvasCells(s.image ? 0 : CHARACTERS[s.character].headY, true, [HAT_DX_MAX, HAT_DY_MIN], HAT_SCALE_MAX);
-  const offset = editing ? draft : s.hatOffset;
-  const hatScale = editing ? scaleDraft : s.hatScale;
-  const changed = draft[0] !== s.hatOffset[0] || draft[1] !== s.hatOffset[1] || scaleDraft !== s.hatScale;
-  const atHome = draft[0] === 0 && draft[1] === 0 && scaleDraft === 1;
-  const save = () => {
-    saveSettings({ hatOffset: draft, hatScale: scaleDraft });
-    setEditing(false);
-  };
-  const cancel = () => setEditing(false);
-
-  return (
-    <div className={`preview-wrap${editing ? " editing" : ""}`}>
-      <div
-        ref={boxRef}
-        className={`preview${editing ? " hat-editing" : ""}${drag ? " dragging" : ""}`}
-        tabIndex={editing ? 0 : undefined}
-        role={editing ? "application" : undefined}
-        aria-label={editing ? "모자 조절: 끌거나 방향키로 옮기고 Enter로 저장, Esc로 취소" : undefined}
-        onPointerDown={(e) => {
-          if (!editing || e.button !== 0) return;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          setDrag({ x0: e.clientX, y0: e.clientY, from: draft });
-        }}
-        onPointerMove={(e) => {
-          if (!drag) return;
-          setDraft(fit([drag.from[0] + (e.clientX - drag.x0) / PREVIEW_PX, drag.from[1] + (e.clientY - drag.y0) / PREVIEW_PX]));
-        }}
-        onPointerUp={() => setDrag(null)}
-        onPointerCancel={() => setDrag(null)}
-        onWheel={(e) => {
-          // 휠로도 모자 크기를 바꾼다 (위로 굴리면 크게)
-          if (!editing) return;
-          setScaleDraft((v) => cleanHatScale(v + (e.deltaY < 0 ? HAT_SCALE_STEP : -HAT_SCALE_STEP)));
-        }}
-        onKeyDown={(e) => {
-          if (!editing) return;
-          if (e.key === "Enter") return save();
-          if (e.key === "Escape") return cancel();
-          const step = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key];
-          if (!step) return;
-          e.preventDefault();
-          setDraft((d) => fit([d[0] + step[0], d[1] + step[1]]));
-        }}
-      >
-        <PetCanvas
-          character={s.character}
-          color={s.color}
-          image={s.image}
-          mood="idle"
-          px={PREVIEW_PX}
-          hat={s.hat}
-          hatOffset={offset}
-          hatScale={hatScale}
-          // 고치는 동안은 가장 멀리 옮겼을 때 크기로 고정: 모자를 옮길 때마다 미리보기가 커졌다 줄었다 하면 모자가 제자리에 있는 것처럼 보인다
-          minCells={editing ? editCells : undefined}
-        />
-      </div>
-      {editing && (
-        <div className="hat-edit-bar" role="group" aria-label="모자 위치·크기 조절">
-          <span className="hint">모자를 끌어서 옮기고, 크기는 슬라이더나 휠로</span>
-          <label className="hat-size">
-            <span>
-              크기 <output>{Math.round(scaleDraft * 100)}%</output>
-            </span>
-            <input
-              type="range"
-              aria-label="모자 크기"
-              min={HAT_SCALE_MIN}
-              max={HAT_SCALE_MAX}
-              step={HAT_SCALE_STEP}
-              value={scaleDraft}
-              aria-valuetext={`${Math.round(scaleDraft * 100)}%`}
-              onChange={(e) => setScaleDraft(Number(e.target.value))}
-            />
-          </label>
-          <div className="inline">
-            <button className="ghost" disabled={atHome} onClick={() => (setDraft([0, 0]), setScaleDraft(1))}>
-              처음대로
-            </button>
-            <button className="ghost" onClick={cancel}>
-              취소
-            </button>
-            <button disabled={!changed} onClick={save}>
-              저장
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * 내 그림을 칸(점선 사각형) 안에서 끌어 옮기고 휠·슬라이더로 키운다. 저장하면 64칸 PNG로 구워 친구에게도 그대로 보인다.
- * 원본은 이 컴퓨터에 따로 두어서 몇 번을 고쳐도 흐려지지 않는다.
- */
-function PictureFitEditor({ s, onDone }: { s: PetSettings; onDone: () => void }) {
-  const orig = s.imageOrig ?? s.image!;
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; onDone: () => void }) {
+  const hasImage = !!s.image;
+  const orig = s.imageOrig ?? s.image;
+  const [target, setTarget] = useState<EditTarget>(start === "pet" && !hasImage ? "hat" : start);
+  const [px, setPx] = useState(s.px);
+  const [hatOff, setHatOff] = useState<HatOffset>(s.hatOffset);
+  const [hatScale, setHatScale] = useState<HatScale>(s.hatScale);
   const [fit, setFit] = useState<PictureFit>(s.imageOrig ? s.imageFit : FIT_DEFAULT);
-  const [drag, setDrag] = useState<{ x0: number; y0: number; from: PictureFit } | null>(null);
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [drag, setDrag] = useState<{ x0: number; y0: number; hat: HatOffset; fit: PictureFit } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    boxRef.current?.focus();
+    if (!orig) return;
     let live = true;
     loadImage(orig).then((i) => live && setImg(i), () => live && setErr("그림을 읽지 못했어요"));
-    boxRef.current?.focus();
     return () => {
       live = false;
     };
   }, [orig]);
-  const url = img ? bakePicture(img, fit) : s.image;
-  // 화면 1px = 그림 몇 칸인지: 64칸 그림이 펫 칸 14줄 높이에 맞춰 보인다
-  const perPx = 64 / (14 * PREVIEW_PX);
-  const move = (dx: number, dy: number) => setFit((f) => cleanFit({ ...f, x: f.x + dx, y: f.y + dy }));
-  const zoomBy = (d: number) => setFit((f) => cleanFit({ ...f, zoom: f.zoom + d }));
-  const changed = !s.imageOrig || fit.x !== s.imageFit.x || fit.y !== s.imageFit.y || fit.zoom !== s.imageFit.zoom;
+
+  const moveHat = !!s.hat && (target === "hat" || !hasImage);
+  const view = Math.min(EDIT_PX_MAX, px); // 미리보기 한 칸
+  const url = hasImage ? (img ? bakePicture(img, fit) : s.image) : null;
+  const fitHat = (v: [number, number]) => cleanHatOffset(v, hatDyMin(s.character, hasImage));
+  const editCells = canvasCells(hasImage ? 0 : CHARACTERS[s.character].headY, !!s.hat, [HAT_DX_MAX, HAT_DY_MIN], HAT_SCALE_MAX);
+  const picPerPx = 64 / (14 * view); // 화면 1px = 그림 몇 칸
+
+  const fitChanged = hasImage && (!s.imageOrig || fit.x !== s.imageFit.x || fit.y !== s.imageFit.y || fit.zoom !== s.imageFit.zoom);
+  const changed = px !== s.px || hatOff[0] !== s.hatOffset[0] || hatOff[1] !== s.hatOffset[1] || hatScale !== s.hatScale || fitChanged;
+  const atDefault = px === PX_DEFAULT && hatOff[0] === 0 && hatOff[1] === 0 && hatScale === 1 && fit.x === 0 && fit.y === 0 && fit.zoom === 1;
+  const reset = () => {
+    setPx(PX_DEFAULT);
+    setHatOff([0, 0]);
+    setHatScale(1);
+    setFit(FIT_DEFAULT);
+  };
   const save = () => {
-    if (!url || !safeImage(url)) return setErr("그림이 너무 복잡해서 저장하지 못했어요. 조금 줄여 보세요.");
-    saveSettings({ image: url, imageOrig: orig, imageFit: fit });
+    const patch: Partial<PetSettings> = { px, hatOffset: hatOff, hatScale };
+    if (hasImage && fitChanged) {
+      if (!url || !img || !safeImage(url)) return setErr("그림이 너무 복잡해서 저장하지 못했어요. 조금 줄여 보세요.");
+      Object.assign(patch, { image: url, imageOrig: orig, imageFit: fit });
+    }
+    saveSettings(patch);
     onDone();
   };
+  const nudge = (dx: number, dy: number) => {
+    if (moveHat) setHatOff((h) => fitHat([h[0] + dx, h[1] + dy]));
+    else if (hasImage) setFit((f) => cleanFit({ ...f, x: f.x + dx, y: f.y + dy }));
+  };
+
+  const slider = (label: string, value: number, min: number, max: number, step: number, onChange: (v: number) => void, text: string) => (
+    <label className="hat-size">
+      <span>
+        {label} <output>{text}</output>
+      </span>
+      <input type="range" aria-label={label} min={min} max={max} step={step} value={value} aria-valuetext={text} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
+  );
+
   return (
     <div className="preview-wrap editing">
+      {hasImage && s.hat && (
+        <Segmented
+          label="끌어서 옮길 것"
+          value={target}
+          options={[
+            ["hat", "🎩 모자 옮기기"],
+            ["pet", "🖼️ 그림 옮기기"],
+          ]}
+          onChange={setTarget}
+        />
+      )}
       <div
         ref={boxRef}
         className={`preview hat-editing${drag ? " dragging" : ""}`}
         tabIndex={0}
         role="application"
-        aria-label="그림 맞추기: 끌거나 방향키로 옮기고 휠로 크기, Enter로 저장, Esc로 취소"
+        aria-label="펫 편집: 끌거나 방향키로 옮기고 휠로 크기, Enter로 저장, Esc로 취소"
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.currentTarget.setPointerCapture(e.pointerId);
-          setDrag({ x0: e.clientX, y0: e.clientY, from: fit });
+          setDrag({ x0: e.clientX, y0: e.clientY, hat: hatOff, fit });
         }}
         onPointerMove={(e) => {
           if (!drag) return;
-          setFit(cleanFit({ ...drag.from, x: drag.from.x + (e.clientX - drag.x0) * perPx, y: drag.from.y + (e.clientY - drag.y0) * perPx }));
+          const dx = e.clientX - drag.x0;
+          const dy = e.clientY - drag.y0;
+          if (moveHat) setHatOff(fitHat([drag.hat[0] + dx / view, drag.hat[1] + dy / view]));
+          else if (hasImage) setFit(cleanFit({ ...drag.fit, x: drag.fit.x + dx * picPerPx, y: drag.fit.y + dy * picPerPx }));
         }}
         onPointerUp={() => setDrag(null)}
         onPointerCancel={() => setDrag(null)}
-        onWheel={(e) => zoomBy(e.deltaY < 0 ? 0.05 : -0.05)}
+        onWheel={(e) => {
+          // 휠: 옮기는 것의 크기 (모자면 모자, 그림이면 그림)
+          const up = e.deltaY < 0;
+          if (moveHat) setHatScale((v) => cleanHatScale(v + (up ? HAT_SCALE_STEP : -HAT_SCALE_STEP)));
+          else if (hasImage) setFit((f) => cleanFit({ ...f, zoom: f.zoom + (up ? 0.05 : -0.05) }));
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") return save();
           if (e.key === "Escape") return onDone();
           const step = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key];
           if (!step) return;
           e.preventDefault();
-          move(step[0], step[1]);
+          nudge(step[0], step[1]);
         }}
       >
-        <PetCanvas character={s.character} color={s.color} image={url} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={s.hatOffset} hatScale={s.hatScale} />
+        <PetCanvas
+          character={s.character}
+          color={s.color}
+          image={url}
+          mood="idle"
+          px={view}
+          hat={s.hat}
+          hatOffset={hatOff}
+          hatScale={hatScale}
+          minCells={s.hat ? editCells : undefined}
+        />
       </div>
-      <div className="hat-edit-bar" role="group" aria-label="그림 위치·크기 맞추기">
-        <span className="hint">그림을 끌어서 옮기고, 크기는 슬라이더나 휠로</span>
-        <label className="hat-size">
-          <span>
-            크기 <output>{Math.round(fit.zoom * 100)}%</output>
-          </span>
-          <input
-            type="range"
-            aria-label="그림 크기"
-            min={FIT_ZOOM_MIN}
-            max={FIT_ZOOM_MAX}
-            step={0.05}
-            value={fit.zoom}
-            aria-valuetext={`${Math.round(fit.zoom * 100)}%`}
-            onChange={(e) => setFit((f) => cleanFit({ ...f, zoom: Number(e.target.value) }))}
-          />
-        </label>
+      <div className="hat-edit-bar" role="group" aria-label="펫 편집">
+        <span className="hint">{moveHat ? "모자를 끌어서 옮겨요" : hasImage ? "그림을 끌어서 옮겨요" : "모자를 쓰면 모자도 옮길 수 있어요"} · 휠로 크기</span>
+        {slider("펫 크기", px, PX_MIN, PX_MAX, 1, setPx, `${percentOf(px)}%`)}
+        {hasImage && slider("그림 확대", fit.zoom, FIT_ZOOM_MIN, FIT_ZOOM_MAX, 0.05, (v) => setFit((f) => cleanFit({ ...f, zoom: v })), `${Math.round(fit.zoom * 100)}%`)}
+        {s.hat && slider("모자 크기", hatScale, HAT_SCALE_MIN, HAT_SCALE_MAX, HAT_SCALE_STEP, setHatScale, `${Math.round(hatScale * 100)}%`)}
+        {px > EDIT_PX_MAX && <span className="hint">미리보기는 {percentOf(EDIT_PX_MAX)}%까지만 크게 보여요</span>}
         {err && <span className="error-inline">{err}</span>}
         <div className="inline">
-          <button className="ghost" disabled={fit.x === 0 && fit.y === 0 && fit.zoom === 1} onClick={() => setFit(FIT_DEFAULT)}>
+          <button className="ghost" disabled={atDefault} onClick={reset}>
             처음대로
           </button>
           <button className="ghost" onClick={onDone}>
             취소
           </button>
-          <button disabled={!changed || !img} onClick={save}>
+          <button disabled={!changed} onClick={save}>
             저장
           </button>
         </div>
