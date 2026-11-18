@@ -68,8 +68,10 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// async여야 한다: 동기 커맨드는 메인 스레드에서 돌아서, 그 안에서 창을 만들면
+/// 윈도우(WebView2)는 창 생성을 기다리다 서로 멈춘다(흰 화면 "응답 없음" → 까만 창).
 #[tauri::command]
-fn open_settings(app: AppHandle) {
+async fn open_settings(app: AppHandle) {
     show_settings(&app);
 }
 
