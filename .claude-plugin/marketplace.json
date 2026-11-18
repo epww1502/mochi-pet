@@ -1,0 +1,12 @@
+{
+  "name": "mochi-pet",
+  "description": "claude-pet: Claude Code 상태를 보여주는 데스크톱 픽셀 펫",
+  "owner": { "name": "epww1502", "url": "https://github.com/epww1502" },
+  "plugins": [
+    {
+      "name": "mochi-pet",
+      "source": "./plugin",
+      "description": "Claude Code 세션 상태를 화면 구석 픽셀 펫으로 보여주는 hook 모음"
+    }
+  ]
+}

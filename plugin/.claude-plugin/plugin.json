@@ -1,0 +1,8 @@
+{
+  "name": "mochi-pet",
+  "version": "0.1.0",
+  "description": "Claude Code 세션 상태를 화면 구석 픽셀 펫의 표정과 말풍선으로 알려준다. 펫 실행 파일은 따로 설치한다.",
+  "author": { "name": "epww1502", "url": "https://github.com/epww1502" },
+  "homepage": "https://github.com/epww1502/claude-pet",
+  "repository": "https://github.com/epww1502/claude-pet"
+}
