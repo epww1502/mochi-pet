@@ -30,6 +30,21 @@ stty -echo
 read -r P12_PASSWORD
 stty echo
 echo
+# 비밀번호가 맞는지 먼저 확인한다: 임시 키체인에 넣어 보고 바로 지운다 (GitHub 빌드도 같은 방법으로 넣는다)
+CHECK_DIR=$(mktemp -d)
+CHECK_KC="$CHECK_DIR/check.keychain-db"
+security create-keychain -p check "$CHECK_KC" >/dev/null 2>&1
+if ! security import "$P12" -k "$CHECK_KC" -P "$P12_PASSWORD" -f pkcs12 >/dev/null 2>&1; then
+  security delete-keychain "$CHECK_KC" >/dev/null 2>&1
+  rm -rf "$CHECK_DIR"
+  echo "비밀번호가 .p12와 맞지 않아요. 인증서를 내보낼 때 정한 비밀번호로 다시 실행해 주세요."
+  echo "(기억이 안 나면 키체인 접근에서 인증서를 다시 내보내면서 새 비밀번호를 정하면 돼요.)"
+  exit 1
+fi
+security delete-keychain "$CHECK_KC" >/dev/null 2>&1
+rm -rf "$CHECK_DIR"
+echo "비밀번호 확인 완료"
+
 printf "App Store Connect API 키 ID (예: 2X9R4HXF34): "
 read -r KEY_ID
 printf "Issuer ID (예: 57246542-96fe-1a63-e053-0824d011072a): "

@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { PhysicalPosition, PhysicalSize, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useRef, useState } from "react";
 import { HATS, HAT_IDS, TAGS, type HatId, type OrnamentId, type SeasonId } from "./decor";
 import { wiggleDetector } from "./gestures";
@@ -15,6 +17,8 @@ import {
   EMOTES,
   EMOTE_MOTION,
   PX_DEFAULT,
+  PX_MAX,
+  PX_MIN,
   REPLIES,
   THROWABLES,
   buildRoster,
@@ -37,7 +41,7 @@ const MAX_FRIENDS = 12;
 /** 켜져 있는 동안 "마지막 접속"을 서버에 남기는 간격 */
 const HEARTBEAT_MS = 60_000;
 /** 창 높이(보통 크기, 논리 px). 너비는 화면 전체 */
-const BASE_H = 280;
+const BASE_H = 340;
 /** 펫 한 마리 자리 너비(보통 크기, styles.css .slot과 같다) */
 const SLOT_W = 112;
 /** 걷는 속도(보통 크기 기준 px/초) */
@@ -52,6 +56,8 @@ const BIG_SHOW_MS = 2600;
 const FLIGHT_MS = 900;
 /** 열지 않은 선물 상자가 남아 있는 시간 */
 const GIFT_KEEP_MS = 3 * 60_000;
+/** 새 버전 확인 간격 */
+const UPDATE_CHECK_MS = 6 * 60 * 60_000;
 
 type Chat = { sender_id: string; body: string; at: number };
 type MoodFx = { kind: Motion; at: number };
@@ -96,8 +102,13 @@ export function Overlay() {
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
   const [draft, setDraft] = useState<string | null>(null); // null = 입력창 닫힘
   const [error, setError] = useState<string | null>(null);
+  const [update, setUpdate] = useState<Update | null>(null); // 새 버전이 있으면
+  const [updating, setUpdating] = useState<string | null>(null); // 받는 중 진행 글자
   const [channel, setChannel] = useState<RealtimeChannel | null>(null); // 구독 완료된 방 채널
   const [dragging, setDragging] = useState(false); // 내 펫을 집어서 끄는 중
+  const [lift, setLift] = useState(0); // 내 펫을 바닥에서 들어 올린 높이(px)
+  const [falling, setFalling] = useState(false);
+  const tallRef = useRef(false); // 들어 올리는 동안 창을 화면 높이 전체로 키운다
   const channelRef = useRef<RealtimeChannel | null>(null);
   channelRef.current = channel;
 
@@ -105,6 +116,37 @@ export function Overlay() {
     if (!s.name) invoke("open_settings");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 자동 업데이트: 켤 때와 6시간마다 새 버전을 확인한다 (못 하면 조용히 넘어간다)
+  useEffect(() => {
+    const look = () =>
+      check()
+        .then((u) => u && setUpdate(u))
+        .catch(() => {});
+    look();
+    const id = setInterval(look, UPDATE_CHECK_MS);
+    return () => clearInterval(id);
+  }, []);
+  async function installUpdate() {
+    if (!update) return;
+    try {
+      let total = 0;
+      let got = 0;
+      setUpdating("받는 중…");
+      await update.downloadAndInstall((e) => {
+        if (e.event === "Started") total = e.data.contentLength ?? 0;
+        if (e.event === "Progress") {
+          got += e.data.chunkLength;
+          if (total) setUpdating(`받는 중 ${Math.round((got / total) * 100)}%`);
+        }
+        if (e.event === "Finished") setUpdating("설치 중…");
+      });
+      await relaunch();
+    } catch {
+      setUpdating(null);
+      setError("업데이트하지 못했어요. 잠시 뒤 다시 해 주세요");
+    }
+  }
 
   const px = s.px; // 내 펫 크기
   const scale = px / PX_DEFAULT;
@@ -268,8 +310,17 @@ export function Overlay() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, s.deviceId, look]);
 
-  const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS, now);
+  // 친구 펫 크기는 내가 바꿨으면 그 크기로 (내 화면에서만)
+  const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS, now).map((p) =>
+    s.friendPx[p.id] ? { ...p, px: s.friendPx[p.id] } : p,
+  );
   const winScale = Math.max(px, ...roster.map((p) => p.px)) / PX_DEFAULT;
+  const placeRef = useRef<() => Promise<void>>(async () => {});
+  function setTall(on: boolean) {
+    if (tallRef.current === on) return;
+    tallRef.current = on;
+    placeRef.current();
+  }
 
   // 창: 지금 모니터의 작업 영역(Dock·작업 표시줄 제외) 바닥에 화면 너비 전체로 깐다. 높이는 제일 큰 펫에 맞춘다.
   useEffect(() => {
@@ -278,10 +329,11 @@ export function Overlay() {
       const mon = await currentMonitor();
       if (!mon) return;
       const a = mon.workArea;
-      const h = Math.round(BASE_H * winScale * mon.scaleFactor);
+      const h = tallRef.current ? a.size.height : Math.round(BASE_H * winScale * mon.scaleFactor);
       await w.setSize(new PhysicalSize(a.size.width, h));
       await w.setPosition(new PhysicalPosition(a.position.x, a.position.y + a.size.height - h));
     };
+    placeRef.current = place;
     place();
     const un = getCurrentWindow().onScaleChanged(() => place()); // 해상도가 다른 모니터로 옮겨지면 다시
     return () => void un.then((f) => f());
@@ -292,7 +344,7 @@ export function Overlay() {
   const walkers = useRef(new Map<string, Walker>());
   const [, setWalkTick] = useState(0);
   const walkState = useRef({ me, roster, moods, bigs, gifts, picker, busyMe: false });
-  walkState.current = { me, roster, moods, bigs, gifts, picker, busyMe: draft !== null || !!replyTo || !!got || dragging };
+  walkState.current = { me, roster, moods, bigs, gifts, picker, busyMe: draft !== null || !!replyTo || !!got || dragging || falling || lift > 0 };
   useEffect(() => {
     let last = performance.now();
     const id = setInterval(() => {
@@ -390,11 +442,13 @@ export function Overlay() {
       setError("설정에서 방을 만들거나 초대 코드로 들어가 주세요");
       return;
     }
-    const { error } = await supabase.rpc("send_message", { p_room: s.room.id, p_sender: s.deviceId, p_sender_name: me.name, p_body: body });
-    if (error) return setError("메시지를 보내지 못했어요");
-    await channel?.send({ type: "broadcast", event: "chat", payload: { sender_id: s.deviceId, body } });
-    if (!channel) setChats((p) => ({ ...p, [s.deviceId]: { sender_id: s.deviceId, body, at: Date.now() } }));
+    // 친구에게 먼저 바로 보내고(말풍선이 바로 뜬다), 대화 기록 저장은 뒤에서 따로
     setDraft(null);
+    if (channel) channel.send({ type: "broadcast", event: "chat", payload: { sender_id: s.deviceId, body } });
+    else setChats((p) => ({ ...p, [s.deviceId]: { sender_id: s.deviceId, body, at: Date.now() } }));
+    supabase
+      .rpc("send_message", { p_room: s.room.id, p_sender: s.deviceId, p_sender_name: me.name, p_body: body })
+      .then(({ error }) => error && setError("대화 기록에 저장하지 못했어요 (말풍선은 보냈어요)"));
   }
 
   async function openChat() {
@@ -418,10 +472,12 @@ export function Overlay() {
       }, 260);
     }
   }
-  const press = useRef<{ x: number; offset: number; moved: boolean } | null>(null);
+  const press = useRef<{ x: number; sy: number; offset: number; moved: boolean } | null>(null);
+  const liftRef = useRef(0);
+  liftRef.current = lift;
   const onDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    press.current = { x: e.clientX, offset: e.clientX - (walkers.current.get(me.id)?.x ?? 0), moved: false };
+    if (e.button !== 0 || falling) return;
+    press.current = { x: e.clientX, sy: e.screenY, offset: e.clientX - (walkers.current.get(me.id)?.x ?? 0), moved: false };
     setDragging(true);
     // 펫 밖으로 커서가 나가도 놓치지 않게 잠깐 창 전체가 클릭을 받는다
     invoke("set_hit_rects", { rects: [[0, 0, window.innerWidth, window.innerHeight]] });
@@ -432,8 +488,12 @@ export function Overlay() {
     const move = (e: MouseEvent) => {
       const p = press.current;
       if (!p) return;
-      if (!p.moved && Math.abs(e.clientX - p.x) > 4) p.moved = true;
+      if (!p.moved && (Math.abs(e.clientX - p.x) > 4 || Math.abs(e.screenY - p.sy) > 4)) p.moved = true;
       if (!p.moved) return;
+      // 위로 들어 올리기: 창이 커지면 clientY가 바뀌므로 화면 좌표(screenY)로 잰다
+      const up = Math.max(0, Math.min(p.sy - e.screenY, screen.availHeight - 140));
+      if (up > 0) setTall(true);
+      setLift(up);
       const w = walkers.current.get(selfId);
       const maxX = Math.max(0, window.innerWidth - SLOT_W * scale);
       const x = Math.min(Math.max(e.clientX - p.offset, 0), maxX);
@@ -447,6 +507,7 @@ export function Overlay() {
       const w = walkers.current.get(selfId);
       if (w) walkers.current.set(selfId, { ...w, moving: false });
       if (p && !p.moved) onTapRef.current();
+      if (liftRef.current > 0) setFalling(true);
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -458,6 +519,38 @@ export function Overlay() {
   }, [dragging]);
   const onTapRef = useRef(onTap);
   onTapRef.current = onTap;
+
+  // 놓으면 중력으로 떨어져 통통 튄다. 높이서 떨어지면 어지러워한다(친구 화면에도).
+  useEffect(() => {
+    if (!falling) return;
+    const from = liftRef.current;
+    let y = from;
+    let v = 0; // 위가 +
+    let last = performance.now();
+    // requestAnimationFrame은 창이 비활성일 때 멈출 수 있어 일반 타이머(약 60fps)로 돌린다
+    const id = setInterval(() => {
+      const t = performance.now();
+      const dt = Math.min((t - last) / 1000, 0.05);
+      last = t;
+      v -= 2600 * dt;
+      y += v * dt;
+      if (y <= 0) {
+        y = 0;
+        if (-v > 380) v = -v * 0.38; // 통!
+        else {
+          setLift(0);
+          setFalling(false);
+          setTall(false);
+          if (from > 150) reactRef.current(selfId, "dizzy");
+          clearInterval(id);
+          return;
+        }
+      }
+      setLift(y);
+    }, 16);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [falling]);
 
   // 친구 펫: 한 번 누르면 이모티콘·던지기 창, 0.7초 안에 세 번 누르면 콕 찌르기
   const taps = useRef(new Map<string, number[]>());
@@ -527,6 +620,19 @@ export function Overlay() {
           {error}
         </div>
       )}
+      {update && !error && (
+        <div className="toast update" data-hit>
+          <span>새 버전 v{update.version}</span>
+          <button onClick={installUpdate} disabled={!!updating}>
+            {updating ?? "업데이트"}
+          </button>
+          {!updating && (
+            <button className="ghost" aria-label="나중에" onClick={() => setUpdate(null)}>
+              나중에
+            </button>
+          )}
+        </div>
+      )}
       <div className="row">
         <PetSlot
           peer={{ ...me, online: true, lastSeen: null }}
@@ -534,7 +640,9 @@ export function Overlay() {
           now={now}
           labelPos={s.labelPos}
           {...fx(me.id)}
+          {...(lift > 0 && !falling ? { mood: "surprised" as Motion } : {})}
           {...posOf(me.id, px)}
+          lift={lift}
           title="클릭: 채팅 · 더블클릭: 크게 인사 · 끌기: 옮기기(흔들면 어지러워해요) · 머리 문지르기: 쓰다듬기 · 오른쪽 클릭: 설정"
           onMouseDown={onDown}
           onMouseMove={(e) => onPetHover(me.id, e)}
@@ -651,6 +759,34 @@ export function Overlay() {
                 >
                   🎁
                 </button>
+                <span className="reply-label">크기 (내 화면에서만)</span>
+                <button
+                  className="wide"
+                  aria-label={`${p.name} 펫 작게`}
+                  disabled={p.px <= PX_MIN}
+                  onClick={() => saveSettings({ friendPx: { ...s.friendPx, [p.id]: Math.max(PX_MIN, p.px - 1) } })}
+                >
+                  −
+                </button>
+                <button
+                  className="wide"
+                  aria-label={`${p.name} 펫 크게`}
+                  disabled={p.px >= PX_MAX}
+                  onClick={() => saveSettings({ friendPx: { ...s.friendPx, [p.id]: Math.min(PX_MAX, p.px + 1) } })}
+                >
+                  ＋
+                </button>
+                {s.friendPx[p.id] !== undefined && (
+                  <button
+                    className="wide full"
+                    onClick={() => {
+                      const { [p.id]: _reset, ...rest } = s.friendPx;
+                      saveSettings({ friendPx: rest });
+                    }}
+                  >
+                    원래 크기로
+                  </button>
+                )}
               </div>
             ) : undefined}
           </PetSlot>
@@ -714,6 +850,7 @@ function PetSlot({
   x,
   walk,
   edge,
+  lift = 0,
   children,
   ...handlers
 }: {
@@ -737,6 +874,8 @@ function PetSlot({
   walk: Walk | null;
   /** 화면 끝 가까이면 위에 뜨는 칸을 안쪽으로 맞춘다 */
   edge: string;
+  /** 바닥에서 들어 올린 높이(px) */
+  lift?: number;
   children?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const text = chat?.body ?? (peer.status === "typing" ? "…" : null);
@@ -760,7 +899,7 @@ function PetSlot({
     <div
       className={`slot${peer.online ? "" : " offline"}${big ? " big" : ""}${hatTall ? " hatted" : ""}${edge}`}
       data-peer={peer.id}
-      style={{ left: x, "--s": peer.px / PX_DEFAULT } as React.CSSProperties}
+      style={{ left: x, bottom: 4 + lift, transition: lift ? "none" : undefined, "--s": peer.px / PX_DEFAULT } as React.CSSProperties}
     >
       {children ?? (text && <Bubble text={text} />)}
       {emote && (

@@ -379,7 +379,7 @@ html[data-view="settings"] body {
 
 .picker {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(6, 1fr); /* 가로로 넓게: 줄 수가 줄어 창 위로 안 잘린다 */
   gap: calc(2px * var(--s));
   margin-bottom: calc(6px * var(--s));
   padding: calc(4px * var(--s));
@@ -655,6 +655,13 @@ html[data-view="settings"] body {
 
 .picker button.wide {
   grid-column: span 3;
+}
+
+.picker button.wide.full {
+  grid-column: 1 / -1;
+}
+
+.picker button.wide {
   font-size: max(11px, calc(12px * var(--s)));
   font-weight: 700;
   background: var(--soft);
@@ -947,4 +954,31 @@ html[data-view="settings"] body {
 .places button {
   width: 100%;
   text-align: left;
+}
+
+/* 새 버전 알림 */
+.toast.update {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #e9f7ee;
+  border-color: #3fb950;
+  cursor: default;
+}
+
+.toast.update button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 0;
+  background: #2f9e57;
+  color: #fff;
+  cursor: pointer;
+}
+
+.toast.update button.ghost {
+  background: transparent;
+  color: #2f6b45;
 }

@@ -1,6 +1,6 @@
 [package]
 name = "mochi-pet"
-version = "0.2.6"
+version = "0.2.7"
 description = "친구들과 화면 구석에서 상태를 보고 채팅하는 데스크톱 픽셀 펫"
 edition = "2024"
 
@@ -15,6 +15,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 user-idle = "0.6"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde_json = "1"
 
 [profile.release]
 codegen-units = 1

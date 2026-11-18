@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, presenceToPeers, pxOf, safeImage, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, presenceToPeers, pxOf, safeImage, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -188,5 +188,12 @@ describe("statusLight", () => {
 describe("ago", () => {
   it("방금 / 분 / 시간 / 일", () => {
     expect([ago(30_000), ago(5 * 60_000), ago(3 * 3600_000), ago(2 * 86400_000)]).toEqual(["방금", "5분 전", "3시간 전", "2일 전"]);
+  });
+});
+
+describe("cleanFriendPx", () => {
+  it("친구별 크기는 숫자만 남기고 범위 안으로 맞춘다", () => {
+    expect(cleanFriendPx({ a: 3, b: 50, c: "big", d: Number.NaN })).toEqual({ a: 3, b: 12 });
+    expect(cleanFriendPx(null)).toEqual({});
   });
 });

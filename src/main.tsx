@@ -13,7 +13,13 @@ if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
   const { mockIPC, mockWindows } = await import("@tauri-apps/api/mocks");
   mockWindows("main");
   const away = new URLSearchParams(location.search).has("away");
-  mockIPC((cmd) => (cmd === "idle_seconds" ? (away ? 9999 : 0) : null));
+  // ?update 를 붙이면 새 버전 알림을 띄워 본다
+  const fakeUpdate = new URLSearchParams(location.search).has("update");
+  mockIPC((cmd) => {
+    if (cmd === "idle_seconds") return away ? 9999 : 0;
+    if (cmd === "plugin:updater|check") return fakeUpdate ? { rid: 1, currentVersion: "0.2.6", version: "0.2.7", date: null, body: "", rawJson: {} } : null;
+    return null;
+  });
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

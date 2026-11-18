@@ -36,6 +36,8 @@ export type Settings = {
   /** 실제 날씨 효과 (기본 꺼짐). 켜면 place의 날씨를 30분마다 받아 온다 */
   weatherOn: boolean;
   place: Place | null;
+  /** 친구 펫 크기를 내 화면에서만 바꾼 값 (친구 id → 픽셀 한 칸) */
+  friendPx: Record<string, number>;
 };
 
 /** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
@@ -47,6 +49,16 @@ export const percentOf = (px: number) => px * 20;
 /** v0.2.1까지 쓰던 단계 설정 */
 const LEGACY_SIZES = new Map<unknown, number>([["xs", 3], ["s", 4], ["m", 5], ["l", 7], ["xl", 10]]);
 
+/** 친구별 크기: 숫자만, 범위 안으로 */
+export function cleanFriendPx(v: unknown): Record<string, number> {
+  if (!v || typeof v !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(v as Record<string, unknown>)
+      .filter(([, n]) => typeof n === "number" && Number.isFinite(n))
+      .map(([k, n]) => [k, pxOf({ px: n })]),
+  );
+}
+
 /** 저장된 값에서 칸 크기를 꺼낸다. 예전 단계 설정은 이어받고, 이상한 값은 보통(100%)으로. */
 export function pxOf(saved: { px?: unknown; size?: unknown }): number {
   const v = typeof saved.px === "number" && Number.isFinite(saved.px) ? saved.px : (LEGACY_SIZES.get(saved.size) ?? PX_DEFAULT);
@@ -56,7 +68,7 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, tag: null, seasons: [], quiet: false, weatherOn: false, place: null };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
@@ -70,6 +82,7 @@ function load(): Settings {
       quiet: saved.quiet === true,
       weatherOn: saved.weatherOn === true,
       place: safePlace(saved.place),
+      friendPx: cleanFriendPx(saved.friendPx),
     };
   } catch {
     return base;

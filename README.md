@@ -82,3 +82,11 @@ npm test && cargo test --manifest-path src-tauri/Cargo.toml
 2. **공증 키**: App Store Connect → 사용자 및 액세스 → 통합 → App Store Connect API → 팀 키 `+` (액세스: 개발자) → `AuthKey_XXXX.p8` 다운로드, 키 ID와 Issuer ID 메모.
 3. **등록**: `sh scripts/set-apple-secrets.sh 인증서.p12 AuthKey_XXXX.p8` → GitHub Secrets에 저장된다.
 4. 새 태그(`v*`)를 push하면 릴리스 빌드가 서명 → 앱 공증 → dmg 공증·스테이플까지 한다. Secrets가 없으면 예전처럼 임시 서명만 한다.
+
+## 자동 업데이트 (배포하는 사람용)
+
+앱은 켤 때와 6시간마다 `releases/latest/download/latest.json`을 확인하고, 새 버전이 있으면 펫 창 오른쪽 위에 "업데이트" 버튼을 띄운다. 업데이트 파일은 서명 키로 검증한다.
+
+1. 한 번만: `sh scripts/setup-updater-key.sh` → 키(`~/.tauri/mochi-pet.key`)를 만들어 GitHub Secrets에 등록하고, 공개 키를 `src-tauri/tauri.conf.json`에 넣는다. 키 파일과 비밀번호는 꼭 백업한다(잃어버리면 이후 업데이트를 못 한다).
+2. 릴리스는 세 빌드가 모두 성공해야 공개된다. 하나라도 실패하면 초안으로 남고, 최신 링크와 자동 업데이트는 이전 버전 그대로다.
+3. 로컬에서 설치 파일까지 만들 땐 서명 키가 필요하다. 키 없이 실행 파일만 만들려면 `npx tauri build --no-bundle`.

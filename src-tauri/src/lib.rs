@@ -43,6 +43,9 @@ pub fn run() {
     tauri::Builder::default()
         // 두 번 켜면 새로 띄우지 않고 설정 창을 연다
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_settings(app)))
+        // 자동 업데이트: GitHub 최신 릴리스의 latest.json을 보고, 서명이 맞는 파일만 설치한다
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(HitRects::default())
         .invoke_handler(tauri::generate_handler![set_hit_rects, idle_seconds, open_settings])
         .setup(|app| {
