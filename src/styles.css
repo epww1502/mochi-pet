@@ -87,7 +87,8 @@ html[data-view="overlay"] body {
 .bubble,
 .chat-input {
   position: relative;
-  margin-bottom: calc(6px * var(--s));
+  /* 말풍선 꼬리(7px)가 이름표를 덮지 않게: 펫이 작아져도 이만큼은 띄운다 */
+  margin-bottom: max(11px, calc(11px * var(--s)));
   border: 2px solid var(--line);
   border-radius: calc(8px * var(--s));
   background: var(--paper);
@@ -96,7 +97,8 @@ html[data-view="overlay"] body {
 }
 
 .bubble {
-  max-width: calc(150px * var(--s));
+  /* 글씨는 최소 크기가 있어서, 폭도 같이 최소를 둬야 한 글자씩 줄바꿈되지 않는다 */
+  max-width: max(150px, calc(150px * var(--s)));
   text-align: center;
   overflow-wrap: anywhere;
 }
@@ -115,7 +117,7 @@ html[data-view="overlay"] body {
 }
 
 .chat-input {
-  width: calc(220px * var(--s));
+  width: max(220px, calc(220px * var(--s)));
   align-self: flex-end;
   font: inherit;
   font-size: max(11px, calc(13px * var(--s)));
@@ -1120,9 +1122,8 @@ html[data-view="settings"] body {
 }
 
 .mini-log {
-  width: calc(230px * var(--s));
-  min-width: 200px;
-  max-height: calc(170px * var(--s));
+  width: max(250px, calc(250px * var(--s)));
+  max-height: max(200px, calc(200px * var(--s)));
   overflow-y: auto;
   margin-bottom: calc(6px * var(--s));
   padding: 6px 8px;
@@ -1137,6 +1138,11 @@ html[data-view="settings"] body {
   display: flex;
   justify-content: space-between;
   margin-bottom: 4px;
+  /* 스크롤해도 제목과 닫기 버튼은 위에 남는다 */
+  position: sticky;
+  top: -6px;
+  padding-top: 2px;
+  background: var(--paper);
 }
 
 .mini-log-head button {
@@ -1211,4 +1217,23 @@ html[data-view="settings"] body {
   border-color: #ffc93c;
   color: #4a3a12;
   font-size: calc(13px * var(--s));
+}
+
+/* 스크롤바: 윈도우 기본 스크롤바는 두껍고 칸 안쪽을 차지해서 작은 창(최근 대화 등)이 깨져 보인다. 얇게.
+   scrollbar-width를 같이 쓰면 크로미움(WebView2)이 아래 모양을 무시하고 화살표를 그대로 그려서 쓰지 않는다. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #c9bdb2;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-button {
+  display: none;
 }

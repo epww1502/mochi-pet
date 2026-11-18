@@ -127,6 +127,25 @@ export function Overlay() {
   const [eventToast, setEventToast] = useState<{ text: string; at: number } | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   channelRef.current = channel;
+  // 실시간 연결이 죽으면(잠자기, 와이파이 끊김) 채널을 새로 만든다. 이 숫자를 올리면 방 연결을 다시 한다.
+  const [reconnect, setReconnect] = useState(0);
+  const reconnectSoon = () => setReconnect((n) => n + 1);
+  /** 실시간 방 연결이 살아 있을 때만 그 채널. 아니면 null (보낼 건 내 화면에 바로 보이고, 연결을 다시 한다) */
+  const live = () => (channelRef.current?.state === "joined" ? channelRef.current : null);
+  /** broadcast 보내기. 연결이 죽었거나 안 가면 fallback(내 화면에만)을 하고 다시 연결한다 */
+  const broadcast = (event: string, payload: unknown, fallback: () => void) => {
+    const ch = live();
+    if (!ch) {
+      fallback();
+      if (channelRef.current) reconnectSoon();
+      return;
+    }
+    ch.send({ type: "broadcast", event, payload }).then((r) => {
+      if (r === "ok") return;
+      fallback();
+      reconnectSoon();
+    });
+  };
 
   useEffect(() => {
     if (!s.name) invoke("open_settings");
@@ -266,16 +285,14 @@ export function Overlay() {
   /** 반응 보내기: 방에 있으면 모두에게(나 포함) 퍼지고, 혼자면 내 화면에만 */
   function react(target: string, kind: Reaction["kind"], extra: { emoji?: Emote; item?: Throwable; hat?: HatId } = {}) {
     const r: Reaction = { target, by: selfId, from: me.name, kind, ...extra };
-    if (channel) channel.send({ type: "broadcast", event: "react", payload: r });
-    else applyReaction(r);
+    broadcast("react", r, () => applyReaction(r));
   }
   const reactRef = useRef(react);
   reactRef.current = react;
 
   /** 놀이 신호 보내기: 방에 있으면 모두에게(나 포함), 혼자면 내 화면에만 */
   function sendGame(m: GameMsg) {
-    if (channel) channel.send({ type: "broadcast", event: "game", payload: m });
-    else applyGame(m);
+    broadcast("game", m, () => applyGame(m));
   }
   const sendGameRef = useRef(sendGame);
   sendGameRef.current = sendGame;
@@ -334,6 +351,8 @@ export function Overlay() {
     setPeers([]);
     setMembers([]);
     if (!roomId) return;
+    let alive = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const ch = supabase.channel(`room:${roomId}`, { config: { presence: { key: s.deviceId }, broadcast: { self: true } } });
     ch.on("presence", { event: "sync" }, () => setPeers(presenceToPeers(ch.presenceState<PeerState>() as Record<string, PeerState[]>, s.deviceId)))
       .on("presence", { event: "leave" }, () => loadRef.current()) // 누가 나가면 마지막 접속 시각을 새로 받아 온다
@@ -362,17 +381,47 @@ export function Overlay() {
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           setChannel(ch);
+          setError((e) => (e && /연결/.test(e) ? null : e)); // 다시 붙었으면 연결 안내는 지운다
           // 인터넷이 잠깐 끊겼다 다시 붙어도(맥 잠자기 포함) 같은 채널 객체라 위 state가 안 바뀐다.
           // 그래서 여기서 바로 "나 여기 있어"를 다시 보낸다. 안 하면 켜져 있어도 친구 화면에서 사라진다.
           ch.track(meRef.current);
         }
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setError("방에 연결하지 못했어요 (회사 네트워크가 웹소켓을 막을 수 있어요)");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          if (!alive) return; // 방을 나가거나 다시 연결하느라 닫은 것
+          if (status !== "CLOSED") setError("방에 연결하지 못했어요. 다시 연결하는 중… (회사 네트워크가 웹소켓을 막을 수 있어요)");
+          // 끊긴 채로 두면 펫은 1분마다 남기는 접속 기록으로 계속 온라인처럼 보이는데 채팅·반응만 안 오간다. 그래서 새로 붙는다.
+          clearTimeout(retry);
+          retry = setTimeout(reconnectSoon, 5000);
+        }
       });
     return () => {
+      alive = false;
+      clearTimeout(retry);
       setChannel(null);
       supabase.removeChannel(ch);
     };
-  }, [roomId, s.deviceId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, s.deviceId, reconnect]);
+
+  // 연결 지킴이: 1분마다 보고, 채널이 붙어 있지 않은 채로 두 번 연속이면 새로 만든다. 인터넷이 다시 붙어도 바로.
+  useEffect(() => {
+    if (!roomId) return;
+    let bad = 0;
+    const id = setInterval(() => {
+      bad = live() ? 0 : bad + 1;
+      if (bad >= 2) {
+        bad = 0;
+        reconnectSoon();
+      }
+    }, HEARTBEAT_MS);
+    const onOnline = () => !live() && reconnectSoon();
+    window.addEventListener("online", onOnline);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("online", onOnline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]);
 
   // 방 멤버(꺼진 친구 포함)와 마지막 접속 시각
   async function loadMembers() {
@@ -635,8 +684,11 @@ export function Overlay() {
     }
     // 친구에게 먼저 바로 보내고(말풍선이 바로 뜬다), 대화 기록 저장은 뒤에서 따로
     setDraft(null);
-    if (channel) channel.send({ type: "broadcast", event: "chat", payload: { sender_id: s.deviceId, body } });
-    else setChats((p) => ({ ...p, [s.deviceId]: { sender_id: s.deviceId, body, at: Date.now() } }));
+    broadcast("chat", { sender_id: s.deviceId, body }, () => {
+      // 실시간으로 못 보냈어도 내 말풍선은 보이고, 대화 기록(아래)에는 남아 친구가 최근 대화에서 본다
+      setChats((p) => ({ ...p, [s.deviceId]: { sender_id: s.deviceId, body, at: Date.now() } }));
+      if (channelRef.current) setError("실시간 연결이 끊겨 다시 연결하는 중이에요. 메시지는 대화 기록에 남겼어요");
+    });
     supabase
       .rpc("send_message", { p_room: s.room.id, p_sender: s.deviceId, p_sender_name: me.name, p_body: body })
       .then(({ error }) => error && setError("대화 기록에 저장하지 못했어요 (말풍선은 보냈어요)"));
@@ -835,6 +887,12 @@ export function Overlay() {
           ]
         : log,
     );
+  // 최근 대화를 열면 맨 아래(가장 최근)부터 보이게
+  const miniLogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = miniLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [miniLog]);
   async function openMiniLog() {
     setUnread(0);
     if (!roomId) return setError("방에 들어가면 최근 대화를 볼 수 있어요");
@@ -842,7 +900,7 @@ export function Overlay() {
     setMiniLog((data as Message[]) ?? []);
   }
   const miniLogPanel = miniLog ? (
-    <div className="mini-log" data-hit role="log" aria-label="최근 대화">
+    <div className="mini-log" data-hit role="log" aria-label="최근 대화" ref={miniLogRef}>
       <div className="mini-log-head">
         <b>최근 대화</b>
         <button aria-label="닫기" onClick={() => setMiniLog(null)}>

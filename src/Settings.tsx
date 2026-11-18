@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
 import { CHARACTERS, COLORS, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset } from "./sprites";
@@ -24,6 +24,13 @@ export function Settings() {
   const [placeQ, setPlaceQ] = useState("");
   const [found, setFound] = useState<(Place & { detail: string })[] | null>(null);
   const weather = useWeather(s.weatherOn, s.place);
+  // 최근 대화는 맨 아래(가장 최근)가 보이게. 새 메시지가 오면 다시 아래로.
+  const historyRef = useRef<HTMLUListElement>(null);
+  const lastId = history[history.length - 1]?.id;
+  useEffect(() => {
+    const el = historyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lastId]);
 
   const roomId = s.room?.id;
   useEffect(() => {
@@ -423,7 +430,7 @@ export function Settings() {
           {history.length === 0 ? (
             <p className="muted">아직 대화가 없어요. 펫을 클릭하면 말할 수 있어요.</p>
           ) : (
-            <ul className="history">
+            <ul className="history" ref={historyRef}>
               {history.map((m) => (
                 <li key={m.id}>
                   <b>{m.sender_id === s.deviceId ? "나" : m.sender_name}</b> {m.body}
