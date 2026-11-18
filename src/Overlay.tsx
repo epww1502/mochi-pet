@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Menu } from "@tauri-apps/api/menu";
-import { PhysicalPosition, PhysicalSize, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
+import { PhysicalPosition, PhysicalSize, availableMonitors, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
+import { arrivals, notify, shouldNotifyChat, type Presence } from "./notify";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -199,6 +200,11 @@ export function Overlay() {
   meRef.current = me;
   const quietRef = useRef(s.quiet);
   quietRef.current = s.quiet;
+  // 알림: 채팅이 오면 보낸 친구 이름이 필요하다 (방 연결 콜백 안에서 최신 값을 읽는다)
+  const notifyRef = useRef({ chat: s.notifyChat, online: s.notifyOnline });
+  notifyRef.current = { chat: s.notifyChat, online: s.notifyOnline };
+  const namesRef = useRef(new Map<string, string>());
+  const chatNotifiedAt = useRef(new Map<string, number>());
   const winter = s.seasons.includes("winter");
   const weather = useWeather(s.weatherOn, s.place);
 
@@ -323,6 +329,12 @@ export function Overlay() {
       .on("presence", { event: "leave" }, () => loadRef.current()) // 누가 나가면 마지막 접속 시각을 새로 받아 온다
       .on("broadcast", { event: "chat" }, ({ payload }) => {
         const c = payload as { sender_id: string; body: string };
+        const now = Date.now();
+        const alert = { on: notifyRef.current.chat, busy: busyRef.current, quiet: quietRef.current, mine: c.sender_id === s.deviceId, lastAt: chatNotifiedAt.current.get(c.sender_id) };
+        if (shouldNotifyChat(alert, now)) {
+          chatNotifiedAt.current.set(c.sender_id, now);
+          notify(`💬 ${namesRef.current.get(c.sender_id) ?? "친구"}`, String(c.body ?? "").slice(0, 100));
+        }
         // 조용히 모드: 친구 말풍선은 띄우지 않고 개수만 센다 (내용은 설정 창 최근 대화에 남아 있다)
         if (quietRef.current && c.sender_id !== s.deviceId) return setUnread((n) => n + 1);
         setChats((prev) => ({ ...prev, [c.sender_id]: { ...c, at: Date.now() } }));
@@ -389,13 +401,32 @@ export function Overlay() {
   const roster = buildRoster(peers, members, s.deviceId, MAX_FRIENDS, now)
     .filter((p) => !s.hidden[p.id])
     .map((p) => (s.friendPx[p.id] ? { ...p, px: s.friendPx[p.id] } : p));
+  for (const p of [...peers, ...members.map((m) => ({ id: m.device_id, name: m.name }))]) if (!namesRef.current.has(p.id)) namesRef.current.set(p.id, p.name);
+  for (const p of peers) namesRef.current.set(p.id, p.name);
+
+  // 친구 접속 알림: 실시간 접속 목록(presence)이 바뀔 때 새로 들어온 친구만. 숨긴 친구와 바쁠 땐 안 알린다.
+  const presenceRef = useRef<Presence | null>(null);
+  useEffect(() => {
+    presenceRef.current = null; // 방을 바꾸면 처음부터 (이미 있던 친구는 안 알림)
+  }, [roomId]);
+  const peerIds = peers.map((p) => p.id).sort().join(",");
+  useEffect(() => {
+    if (!channel) return; // 연결 전 빈 목록은 "모두 나감"이 아니다
+    const r = arrivals(presenceRef.current, peerIds ? peerIds.split(",") : [], Date.now());
+    presenceRef.current = r.next;
+    if (!notifyRef.current.online || busyRef.current) return;
+    for (const id of r.arrived) if (!s.hidden[id]) notify("🟢 친구가 들어왔어요", `${namesRef.current.get(id) ?? "친구"}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerIds, channel]);
   // 창: 지금 모니터의 작업 영역(Dock·작업 표시줄 제외) 전체를 덮는 투명 창. 클릭은 펫 위에서만 받는다.
   // 화면 전체라서 펫을 높이 들어 올리거나 다른 창 위로 올라갈 수 있다.
   const overlayRef = useRef({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }); // 화면 좌표(논리 px)
   useEffect(() => {
     const place = async () => {
       const w = getCurrentWindow();
-      const mon = await currentMonitor();
+      // 설정에서 고른 모니터. 빠졌거나 안 골랐으면 지금 있는 모니터.
+      const mons = s.monitor ? await availableMonitors().catch(() => []) : [];
+      const mon = mons.find((m) => m.name === s.monitor) ?? (await currentMonitor());
       if (!mon) return;
       const a = mon.workArea;
       const sf = mon.scaleFactor;
@@ -406,11 +437,15 @@ export function Overlay() {
     place();
     const un = getCurrentWindow().onScaleChanged(() => place()); // 해상도가 다른 모니터로 옮겨지면 다시
     return () => void un.then((f) => f());
-  }, []);
+  }, [s.monitor]);
 
   // 맨 앞 창 모서리 (펫이 올라갈 곳). 1.5초마다 다시 본다.
   const frontRef = useRef<Perch | null>(null);
   useEffect(() => {
+    if (!s.climb) {
+      frontRef.current = null; // 끄면 올라가 있던 펫도 내려온다
+      return;
+    }
     const look = () =>
       invoke<[number, number, number, number] | null>("front_window")
         .then((r) => (frontRef.current = perchFrom(r, overlayRef.current, SLOT_W * scale)))
@@ -418,7 +453,7 @@ export function Overlay() {
     look();
     const id = setInterval(look, 1500);
     return () => clearInterval(id);
-  }, [scale]);
+  }, [scale, s.climb]);
 
 
   // 펫마다 화면 바닥을 따라 따로 걷는다 (0.1초마다). 반응 중·채팅 중·자리 비움이면 제자리.

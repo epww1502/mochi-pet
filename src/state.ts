@@ -44,6 +44,14 @@ export type Settings = {
   hidden: Record<string, string>;
   /** 상태 메시지 (이름표 위에 작게, 친구에게도 보인다) */
   statusMsg: string;
+  /** 펫이 가끔 맨 앞 창 위로 올라가 걷는다 (기본 켜짐) */
+  climb: boolean;
+  /** 친구 채팅이 오면 OS 알림 (기본 꺼짐. 바쁨·조용히 모드면 안 울린다) */
+  notifyChat: boolean;
+  /** 친구가 들어오면 OS 알림 (기본 꺼짐. 바쁨이면 안 울린다) */
+  notifyOnline: boolean;
+  /** 펫이 사는 모니터 이름. 없거나 빠지면 앱이 뜬 모니터 */
+  monitor: string | null;
 };
 
 /** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
@@ -74,7 +82,7 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "" };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
@@ -94,6 +102,10 @@ function load(): Settings {
       place: safePlace(saved.place),
       friendPx: cleanFriendPx(saved.friendPx),
       statusMsg: cleanMsg(saved.statusMsg),
+      climb: saved.climb !== false,
+      notifyChat: saved.notifyChat === true,
+      notifyOnline: saved.notifyOnline === true,
+      monitor: typeof saved.monitor === "string" && saved.monitor ? saved.monitor.slice(0, 200) : null,
       hidden:
         saved.hidden && typeof saved.hidden === "object"
           ? Object.fromEntries(Object.entries(saved.hidden as Record<string, unknown>).filter(([, n]) => typeof n === "string")) as Record<string, string>

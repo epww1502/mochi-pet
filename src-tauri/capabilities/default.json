@@ -12,7 +12,11 @@
     "core:window:allow-set-size",
     "core:window:allow-set-focus",
     "core:window:allow-current-monitor",
+    "core:window:allow-available-monitors",
+    "core:window:allow-primary-monitor",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "autostart:default",
+    "notification:default"
   ]
 }

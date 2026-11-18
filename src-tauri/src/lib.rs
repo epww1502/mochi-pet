@@ -22,10 +22,22 @@ fn idle_seconds() -> u64 {
 }
 
 /// 맨 앞에 있는 다른 앱 창의 위치 [x, y, 너비, 높이] (화면 좌표, 논리 px). 펫이 그 위 모서리로 올라간다.
-/// 창의 위치만 읽고 내용·제목은 읽지 않는다. 맥에서만 지원(다른 OS는 None).
+/// 창의 위치만 읽고 내용·제목은 읽지 않는다. 맥과 윈도우에서 지원.
+/// async: 창 목록을 도는 동안 메인 스레드(화면 그리기)를 붙잡지 않는다.
 #[tauri::command]
-fn front_window() -> Option<[f64; 4]> {
-    front_window_rect()
+async fn front_window(app: AppHandle) -> Option<[f64; 4]> {
+    let r = front_window_rect()?;
+    // 윈도우는 실제 픽셀로 준다. 펫 창(main)의 배율로 나눠 펫 창과 같은 논리 px로 맞춘다.
+    #[cfg(target_os = "windows")]
+    {
+        let sf = app.get_webview_window("main").and_then(|w| w.scale_factor().ok()).unwrap_or(1.0);
+        Some(r.map(|v| v / sf))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Some(r)
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -57,9 +69,69 @@ fn front_window_rect() -> Option<[f64; 4]> {
     None
 }
 
-#[cfg(not(target_os = "macos"))]
+/// 윈도우: 위에서부터 창을 차례로 보며 맥과 같은 기준으로 고른다 (실제 픽셀 좌표).
+#[cfg(target_os = "windows")]
 fn front_window_rect() -> Option<[f64; 4]> {
-    None // ponytail: 윈도우는 아직 바닥만 걷는다. EnumWindows + GetWindowRect로 같은 걸 만들면 된다.
+    use std::ffi::c_void;
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GW_HWNDNEXT, GWL_EXSTYLE, GetClassNameW, GetTopWindow, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW,
+        GetWindowThreadProcessId, IsIconic, IsWindowVisible, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    };
+
+    let me = std::process::id();
+    unsafe {
+        let mut h = GetTopWindow(std::ptr::null_mut()); // 맨 위 창부터
+        let mut guard = 0;
+        while !h.is_null() && guard < 2000 {
+            guard += 1;
+            let cur = h;
+            h = GetWindow(cur, GW_HWNDNEXT);
+
+            if IsWindowVisible(cur) == 0 || IsIconic(cur) != 0 || GetWindowTextLengthW(cur) == 0 {
+                continue; // 안 보이는 창, 최소화된 창, 제목 없는 창(팝업·도구)
+            }
+            let ex = GetWindowLongW(cur, GWL_EXSTYLE) as u32;
+            if ex & (WS_EX_TOOLWINDOW | WS_EX_TOPMOST) != 0 {
+                continue; // 작업 표시줄·항상 위 창 (맥의 특수 창 층과 같은 취급)
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(cur, &mut pid);
+            if pid == me {
+                continue; // 우리 앱 창
+            }
+            let mut cloaked = 0u32;
+            let hr = DwmGetWindowAttribute(cur, DWMWA_CLOAKED as _, &mut cloaked as *mut u32 as *mut c_void, 4);
+            if hr == 0 && cloaked != 0 {
+                continue; // 다른 가상 데스크톱이나 숨은 스토어 앱 창
+            }
+            let mut class = [0u16; 32];
+            let n = GetClassNameW(cur, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..n]);
+            if class == "Progman" || class == "WorkerW" {
+                continue; // 바탕 화면
+            }
+            // 눈에 보이는 테두리 기준 (GetWindowRect는 안 보이는 크기 조절 테두리까지 넣는다)
+            let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            let ok = DwmGetWindowAttribute(cur, DWMWA_EXTENDED_FRAME_BOUNDS as _, &mut r as *mut RECT as *mut c_void, std::mem::size_of::<RECT>() as u32) == 0
+                || GetWindowRect(cur, &mut r) != 0;
+            if !ok {
+                continue;
+            }
+            let (w, hgt) = ((r.right - r.left) as f64, (r.bottom - r.top) as f64);
+            if w < 200.0 || hgt < 100.0 {
+                continue; // 작은 팝업은 무시
+            }
+            return Some([r.left as f64, r.top as f64, w, hgt]);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn front_window_rect() -> Option<[f64; 4]> {
+    None
 }
 
 /// 펫 오른쪽 클릭 메뉴와 설정 창의 "펫 종료"
@@ -95,6 +167,10 @@ pub fn run() {
         // 자동 업데이트: GitHub 최신 릴리스의 latest.json을 보고, 서명이 맞는 파일만 설치한다
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 컴퓨터 켤 때 자동 시작 (설정에서 켜고 끈다)
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        // 친구 접속·채팅 알림 (설정에서 켠다)
+        .plugin(tauri_plugin_notification::init())
         .manage(HitRects::default())
         .invoke_handler(tauri::generate_handler![set_hit_rects, idle_seconds, open_settings, quit_app, front_window])
         .setup(|app| {
@@ -154,7 +230,7 @@ fn click_through_loop(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[ignore = "맥에서 창이 떠 있어야 해서 손으로 돌린다: cargo test -- --ignored --nocapture"]
+    #[ignore = "창이 떠 있어야 해서 손으로 돌린다: cargo test -- --ignored --nocapture"]
     fn 맨_앞_창_위치를_읽는다() {
         let r = super::front_window_rect();
         println!("맨 앞 창: {r:?}");

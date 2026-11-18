@@ -5,6 +5,8 @@ import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } fr
 import { CHARACTERS, COLORS, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset } from "./sprites";
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
 import { useWeather } from "./WeatherFx";
+import { askNotifyPermission } from "./notify";
+import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
 import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, saveSettings, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
@@ -341,6 +343,24 @@ export function Settings() {
         </p>
       </section>
 
+      <BehaviorSection s={s} />
+
+      <section>
+        <h2>알림</h2>
+        <NotifyToggle
+          on={s.notifyChat}
+          onChange={(v) => saveSettings({ notifyChat: v })}
+          title="채팅 알림"
+          desc="친구 채팅이 오면 컴퓨터 알림을 띄워요. 바쁨·조용히 모드일 땐 울리지 않아요."
+        />
+        <NotifyToggle
+          on={s.notifyOnline}
+          onChange={(v) => saveSettings({ notifyOnline: v })}
+          title="친구 접속 알림"
+          desc="친구가 앱을 켜면 알려 줘요. 잠깐 끊겼다 다시 붙은 건 알리지 않아요. 바쁨일 땐 울리지 않아요."
+        />
+      </section>
+
       <section>
         <h2>방</h2>
         {s.room ? (
@@ -468,5 +488,115 @@ function PreviewWithHatDrag({ s }: { s: PetSettings }) {
     >
       <PetCanvas character={s.character} color={s.color} image={s.image} mood="idle" px={PREVIEW_PX} hat={s.hat} hatOffset={offset} />
     </div>
+  );
+}
+
+/** 켤 때만 알림 권한을 묻는다. 거절하면 켜지 않고 안내한다. */
+function NotifyToggle({ on, onChange, title, desc }: { on: boolean; onChange: (v: boolean) => void; title: string; desc: string }) {
+  const [denied, setDenied] = useState(false);
+  return (
+    <label className="check">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={async (e) => {
+          const want = e.target.checked;
+          if (want && !(await askNotifyPermission())) return setDenied(true);
+          setDenied(false);
+          onChange(want);
+        }}
+      />
+      <span>
+        <b>{title}</b>
+        <br />
+        <span className="muted">{desc}</span>
+        {denied && (
+          <>
+            <br />
+            <span className="error-inline">알림 권한이 꺼져 있어요. 시스템 설정의 알림에서 mochi-pet을 허용해 주세요.</span>
+          </>
+        )}
+      </span>
+    </label>
+  );
+}
+
+type MonitorChoice = { name: string; label: string };
+
+/** 동작: 자동 시작, 창 위로 올라가기, 펫이 사는 모니터 */
+function BehaviorSection({ s }: { s: PetSettings }) {
+  // 자동 시작은 OS에 등록된 상태가 진짜라 설정 파일에 따로 두지 않고 그때그때 묻는다
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [monitors, setMonitors] = useState<MonitorChoice[]>([]);
+  useEffect(() => {
+    import("@tauri-apps/plugin-autostart")
+      .then((a) => a.isEnabled())
+      .then(setAutostart)
+      .catch(() => setAutostart(null));
+    const load = async () => {
+      const [all, main] = await Promise.all([availableMonitors(), primaryMonitor()]);
+      setMonitors(
+        all
+          .filter((m) => m.name)
+          .map((m, i) => ({
+            name: m.name!,
+            label: `모니터 ${i + 1} · ${Math.round(m.size.width / m.scaleFactor)}x${Math.round(m.size.height / m.scaleFactor)}${main?.name === m.name ? " (주 모니터)" : ""}`,
+          })),
+      );
+    };
+    load().catch(() => setMonitors([]));
+    window.addEventListener("focus", load); // 모니터를 꽂거나 뺐을 수 있다
+    return () => window.removeEventListener("focus", load);
+  }, []);
+  const missing = s.monitor && monitors.length > 0 && !monitors.some((m) => m.name === s.monitor);
+  return (
+    <section>
+      <h2>동작</h2>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!autostart}
+          disabled={autostart === null}
+          onChange={async (e) => {
+            const want = e.target.checked;
+            try {
+              const a = await import("@tauri-apps/plugin-autostart");
+              await (want ? a.enable() : a.disable());
+              setAutostart(await a.isEnabled());
+            } catch {
+              setAutostart(null);
+            }
+          }}
+        />
+        <span>
+          <b>컴퓨터 켤 때 자동으로 시작</b>
+          <br />
+          <span className="muted">재부팅해도 펫이 알아서 켜져서 친구 화면에 계속 보여요.</span>
+        </span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={s.climb} onChange={(e) => saveSettings({ climb: e.target.checked })} />
+        <span>
+          <b>창 위로 올라가기</b>
+          <br />
+          <span className="muted">펫이 가끔 맨 앞 창 위 모서리로 올라가 걸어요. 끄면 화면 바닥에서만 다녀요. 창 위치만 읽고 내용은 읽지 않아요.</span>
+        </span>
+      </label>
+      {monitors.length > 1 || s.monitor ? (
+        <label>
+          펫이 있을 모니터
+          <select value={s.monitor ?? ""} onChange={(e) => saveSettings({ monitor: e.target.value || null })}>
+            <option value="">자동 (앱이 켜진 모니터)</option>
+            {monitors.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.label}
+              </option>
+            ))}
+            {missing && <option value={s.monitor!}>연결 안 된 모니터</option>}
+          </select>
+          {missing && <span className="muted">고른 모니터가 연결돼 있지 않아서 지금은 앱이 켜진 모니터에 있어요.</span>}
+        </label>
+      ) : null}
+    </section>
   );
 }
