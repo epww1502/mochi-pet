@@ -1633,3 +1633,53 @@ html[data-view="settings"] body {
   bottom: 6px;
   border-bottom: 1px solid #e6dcd2;
 }
+
+.friend-list {
+  --s: 1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.friend-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--soft, rgb(0 0 0 / 0.04));
+}
+.friend-list li.hidden {
+  opacity: 0.5;
+}
+.friend-list .friend-pet {
+  flex: none;
+  width: 44px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+}
+.friend-list .friend-pet canvas {
+  display: block;
+}
+.friend-list .friend-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.friend-list .friend-name b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.friend-list .friend-name .muted {
+  font-size: 11px;
+}
+.friend-list button {
+  padding: 4px 10px;
+}

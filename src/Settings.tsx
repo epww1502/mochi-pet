@@ -9,7 +9,7 @@ import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
 import { HOLIDAYS } from "./events";
 import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
-import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
+import { MSG_MAX, PX_DEFAULT, ago, buildRoster, type Member, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -453,6 +453,8 @@ export function Settings() {
             )}
           </section>
 
+          {s.room && <FriendList s={s} roomId={s.room.id} />}
+
           <section>
             <h2>내 상태</h2>
             <div className="inline">
@@ -755,6 +757,72 @@ function PetEditor({ s, start, onDone }: { s: PetSettings; start: EditTarget; on
 }
 
 /** 켤 때만 알림 권한을 묻는다. 거절하면 켜지 않고 안내한다. */
+/** 지금 방의 친구들: 접속 중인지, 마지막 접속, 화면에서 숨기기/다시 보기 */
+function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      supabase.rpc("list_members", { p_room: roomId }).then(({ data }) => {
+        if (!alive) return;
+        setNow(Date.now());
+        if (data) setMembers(data as Member[]);
+      });
+    setMembers(null);
+    load();
+    const id = setInterval(load, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [roomId]);
+  // 친구 펫 화면과 같은 규칙으로 (최근 1분 안에 들어왔으면 접속 중, 같은 사람의 다른 컴퓨터는 한 번만)
+  const friends = members ? buildRoster([], members, s.deviceId, 100, now) : [];
+  const on = friends.filter((f) => f.online).length;
+  return (
+    <section>
+      <h2>
+        친구 목록 {members && <span className="muted">· 접속 {on}명 / {friends.length}명</span>}
+      </h2>
+      {!members ? (
+        <p className="hint">불러오는 중…</p>
+      ) : friends.length === 0 ? (
+        <p className="hint">아직 이 방에 다른 친구가 없어요. 초대 코드를 알려 주세요</p>
+      ) : (
+        <ul className="friend-list">
+          {friends.map((f) => {
+            const hidden = f.id in s.hidden;
+            return (
+              <li key={f.id} className={hidden ? "hidden" : ""}>
+                <span className="friend-pet">
+                  <PetCanvas character={f.character} color={f.color} image={f.image} mood="idle" px={2} still />
+                </span>
+                <span className={`light ${f.online ? "green" : "gray"}`} />
+                <span className="friend-name">
+                  <b>{f.name}</b>
+                  <span className="muted">{f.online ? "접속 중" : f.lastSeen ? ago(now - f.lastSeen) : "오프라인"}</span>
+                </span>
+                <button
+                  className="ghost"
+                  onClick={() => {
+                    if (hidden) {
+                      const { [f.id]: _shown, ...rest } = s.hidden;
+                      saveSettings({ hidden: rest });
+                    } else saveSettings({ hidden: { ...s.hidden, [f.id]: f.name } });
+                  }}
+                >
+                  {hidden ? "다시 보기" : "숨기기"}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function NotifyToggle({ on, onChange, title, desc }: { on: boolean; onChange: (v: boolean) => void; title: string; desc: string }) {
   const [denied, setDenied] = useState(false);
   return (
