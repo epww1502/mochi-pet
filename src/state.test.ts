@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, cleanMsg, presenceToPeers, pxOf, safeImage, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -199,6 +199,31 @@ describe("buildRoster", () => {
     );
     expect(roster.map((p) => [p.name, p.online])).toEqual([["가람", true], ["나래", false]]);
     expect(roster[1].lastSeen).toBe(Date.parse("2026-11-17T00:00:00Z"));
+  });
+
+  it("같은 사람의 다른 컴퓨터(꺼진 쪽)는 빼고, 한 달 넘게 안 온 친구도 뺀다", () => {
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const roster = buildRoster(
+      [peer("a", "영주 집")],
+      [member("b", "영주", "2026-11-18T11:50:00Z"), member("c", "다온", "2026-11-18T11:00:00Z"), member("d", "옛친구", "2026-09-01T00:00:00Z")],
+      "me",
+      6,
+      now,
+    );
+    expect(roster.map((p) => p.name)).toEqual(["영주 집", "다온"]);
+  });
+
+  it("samePerson: 두 글자 이상이 겹칠 때만", () => {
+    expect(samePerson("영주", "영주 집")).toBe(true);
+    expect(samePerson("Yeongju", "yeongju laptop")).toBe(true);
+    expect(samePerson("민", "민수")).toBe(false);
+    expect(samePerson("나래", "다온")).toBe(false);
+  });
+
+  it("서버 시간이 내 시계보다 앞서도 미래가 되지 않는다", () => {
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const roster = buildRoster([], [member("b", "나래", "2026-11-18T12:05:00Z")], "me", 6, now);
+    expect(roster[0].lastSeen).toBe(now);
   });
 
   it("꺼진 친구는 최근에 들어온 순서, 창에 들어가는 만큼만", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LUNCH, rpsWinner, sanitizeGame, spin, tally } from "./games";
+import { LUNCH, rpsWinner, sanitizeGame, seededRand, spin, tally } from "./games";
 
 describe("가위바위보", () => {
   it("바위는 가위를, 가위는 보를, 보는 바위를 이긴다", () => {
@@ -44,5 +44,18 @@ describe("sanitizeGame", () => {
   it("투표 결과의 이상한 메뉴 이름은 지운다", () => {
     const r = sanitizeGame({ t: "voteResult", id: "1", winner: "국밥", tally: { 국밥: 2, "<img>": 9 } });
     expect(r && r.t === "voteResult" && r.tally).toEqual({ 국밥: 2 });
+  });
+});
+
+describe("seededRand", () => {
+  it("같은 투표 id면 어느 컴퓨터에서나 같은 메뉴", () => {
+    const t = { 국밥: 1, 초밥: 1, 돈까스: 0 };
+    expect(spin(t, seededRand("vote-1"))).toBe(spin(t, seededRand("vote-1")));
+    const r = seededRand("x");
+    for (let i = 0; i < 100; i++) {
+      const v = r();
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(1);
+    }
   });
 });

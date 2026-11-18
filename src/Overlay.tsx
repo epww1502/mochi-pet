@@ -8,11 +8,11 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useEffect, useRef, useState } from "react";
 import { HATS, HAT_IDS, TAGS, type HatId, type OrnamentId, type SeasonId } from "./decor";
-import { FOODS, LUNCH, RPS, VOTE_MS, rpsWinner, sanitizeGame, spin, tally, type Food, type GameMsg, type Rps } from "./games";
+import { FOODS, LUNCH, RPS, VOTE_GRACE_MS, VOTE_MS, rpsWinner, seededRand, sanitizeGame, spin, tally, type Food, type GameMsg, type Rps } from "./games";
 import { wiggleDetector } from "./gestures";
 import { Bubble, PetCanvas } from "./Pet";
 import { newWalker, perchFrom, stepRoam, type Perch, type Walker } from "./roam";
-import { CHARACTERS } from "./sprites";
+import { CANVAS_H, CHARACTERS } from "./sprites";
 import { SeasonFx, Tree, type Ornament } from "./Seasons";
 import { WeatherFx, useWeather } from "./WeatherFx";
 import type { Mood, Motion, Walk } from "./sprites";
@@ -48,6 +48,8 @@ const MAX_FRIENDS = 12;
 const HEARTBEAT_MS = 60_000;
 /** 펫 한 마리 자리 너비(보통 크기, styles.css .slot과 같다) */
 const SLOT_W = 112;
+/** 펫 하나가 차지하는 높이(그림 + 이름표·상태 메시지 여유, 화면 px) */
+const petTall = (petPx: number) => CANVAS_H * petPx + 48 * (petPx / PX_DEFAULT);
 /** 걷는 속도(보통 크기 기준 px/초) */
 const WALK_SPEED = 32;
 const CHAT_SHOW_MS = 7000;
@@ -97,6 +99,11 @@ export function Overlay() {
   const [peers, setPeers] = useState<PeerState[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [now, setNow] = useState(() => Date.now()); // "3분 전" 같은 글자를 새로 고치는 시계
+  // 방이 없어도 1분마다 간다 (자정이 지나면 생일·기념일이 바뀐다)
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const [chats, setChats] = useState<Record<string, Chat>>({});
   const [moods, setMoods] = useState<Record<string, MoodFx>>({});
   const [emotes, setEmotes] = useState<Record<string, EmoteFx>>({});
@@ -205,6 +212,9 @@ export function Overlay() {
   const away = idleMin >= AWAY_AFTER_MIN;
   const busyRef = useRef(s.busy);
   busyRef.current = s.busy;
+  // 숨긴 친구: 알림·안 읽은 수·답장 추천에서도 뺀다
+  const hiddenRef = useRef(s.hidden);
+  hiddenRef.current = s.hidden;
 
   const me: PeerState = {
     id: s.deviceId,
@@ -242,7 +252,7 @@ export function Overlay() {
       const emoji = r.emoji;
       setEmotes((p) => ({ ...p, [r.target]: { emoji, from: r.from, at } })); // 받은 펫 위로 이모티콘
       setMoods((p) => ({ ...p, [r.by]: { kind: EMOTE_MOTION[emoji], at } })); // 보낸 펫은 몸짓
-      if (r.target === selfId && r.by !== selfId && !busyRef.current) setReplyTo({ by: r.by, from: r.from, emoji });
+      if (r.target === selfId && r.by !== selfId && !busyRef.current && !hiddenRef.current[r.by]) setReplyTo({ by: r.by, from: r.from, emoji });
     }
     if (r.kind === "dizzy" || r.kind === "happy") setMoods((p) => ({ ...p, [r.target]: { kind: r.kind as Motion, at } }));
     if (r.kind === "big") {
@@ -354,6 +364,17 @@ export function Overlay() {
   useEffect(() => {
     setPeers([]);
     setMembers([]);
+    // 이전 방의 놀이·선물·채팅도 같이 비운다 (안 비우면 이전 방 투표 때문에 새 투표를 못 연다)
+    setChats({});
+    setGifts({});
+    setUnread(0);
+    setRpsAsk(null);
+    setRpsIncoming(null);
+    setCatchBall(null);
+    setVote(null);
+    setSpinning(null);
+    setMiniLog(null);
+    setReplyTo(null);
     loadRef.current();
   }, [roomId]);
   useEffect(() => {
@@ -366,6 +387,7 @@ export function Overlay() {
       .on("broadcast", { event: "chat" }, ({ payload }) => {
         const c = sanitizeChat(payload);
         if (!c) return; // 모양이 이상한 채팅은 버린다 (그대로 그리면 화면 전체가 멈출 수 있다)
+        if (hiddenRef.current[c.sender_id]) return; // 숨긴 친구는 말풍선·알림 모두 없음
         const now = Date.now();
         const alert = { on: notifyRef.current.chat, busy: busyRef.current, quiet: quietRef.current, mine: c.sender_id === s.deviceId, lastAt: chatNotifiedAt.current.get(c.sender_id) };
         if (shouldNotifyChat(alert, now)) {
@@ -373,9 +395,9 @@ export function Overlay() {
           notify(`💬 ${namesRef.current.get(c.sender_id) ?? "친구"}`, String(c.body ?? "").slice(0, 100));
         }
         // 조용히 모드: 친구 말풍선은 띄우지 않고 개수만 센다 (내용은 설정 창 최근 대화에 남아 있다)
+        appendLogRef.current(c); // 열어 둔 최근 대화엔 조용히 모드여도 쌓는다
         if (quietRef.current && c.sender_id !== s.deviceId) return setUnread((n) => n + 1);
         setChats((prev) => ({ ...prev, [c.sender_id]: { ...c, at: Date.now() } }));
-        appendLogRef.current(c);
       })
       .on("broadcast", { event: "tree" }, () => loadTreeRef.current())
       .on("broadcast", { event: "game" }, ({ payload }) => {
@@ -489,21 +511,33 @@ export function Overlay() {
   // 화면 전체라서 펫을 높이 들어 올리거나 다른 창 위로 올라갈 수 있다.
   const overlayRef = useRef({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }); // 화면 좌표(논리 px)
   useEffect(() => {
-    const place = async () => {
-      const w = getCurrentWindow();
+    let last = ""; // 마지막으로 맞춘 작업 영역 (바뀌었을 때만 다시 맞춘다)
+    const target = async () => {
       // 설정에서 고른 모니터. 빠졌거나 안 골랐으면 지금 있는 모니터.
       const mons = s.monitor ? await availableMonitors().catch(() => []) : [];
-      const mon = mons.find((m) => m.name === s.monitor) ?? (await currentMonitor());
+      return mons.find((m) => m.name === s.monitor) ?? (await currentMonitor());
+    };
+    const place = async (force = false) => {
+      const w = getCurrentWindow();
+      const mon = await target();
       if (!mon) return;
       const a = mon.workArea;
       const sf = mon.scaleFactor;
+      const key = `${mon.name}|${a.position.x},${a.position.y},${a.size.width}x${a.size.height}@${sf}`;
+      if (!force && key === last) return;
+      last = key;
       await w.setSize(new PhysicalSize(a.size.width, a.size.height));
       await w.setPosition(new PhysicalPosition(a.position.x, a.position.y));
       overlayRef.current = { x: a.position.x / sf, y: a.position.y / sf, w: a.size.width / sf, h: a.size.height / sf };
     };
-    place();
-    const un = getCurrentWindow().onScaleChanged(() => place()); // 해상도가 다른 모니터로 옮겨지면 다시
-    return () => void un.then((f) => f());
+    place(true);
+    const un = getCurrentWindow().onScaleChanged(() => place(true)); // 해상도가 다른 모니터로 옮겨지면 다시
+    // 모니터를 빼거나 꽂고, 작업 표시줄을 옮기거나 크기를 바꾸면 작업 영역이 바뀐다 → 5초마다 확인
+    const id = setInterval(() => void place().catch(() => {}), 5000);
+    return () => {
+      clearInterval(id);
+      void un.then((f) => f());
+    };
   }, [s.monitor]);
 
   // 맨 앞 창 모서리 (펫이 올라갈 곳). 1.5초마다 다시 본다.
@@ -546,7 +580,10 @@ export function Overlay() {
         const mine = p.id === st.me.id;
         const canWalk = p.online && p.status === "idle" && !st.moods[p.id] && !st.bigs[p.id] && !st.gifts[p.id] && st.picker !== p.id && !(mine && st.busyMe);
         if (mine && dragging) continue; // 끄는 중엔 손이 정한다
-        walkers.current.set(p.id, stepRoam(w, { dt, now, maxX, slotW: SLOT_W * k, speed: WALK_SPEED * k, canWalk, front: frontRef.current }));
+        // 창 위 모서리 위로 펫 키(+이름표)만큼 여유가 있어야 올라간다. 크게 해 둔 펫이 화면 위로 잘리지 않게.
+        const f = frontRef.current;
+        const front = f && window.innerHeight - f.y >= petTall(p.px) ? f : null;
+        walkers.current.set(p.id, stepRoam(w, { dt, now, maxX, slotW: SLOT_W * k, speed: WALK_SPEED * k, canWalk, front }));
       }
       setWalkTick((n) => (n + 1) % 1_000_000);
     }, 100);
@@ -747,7 +784,7 @@ export function Overlay() {
       if (!p.moved && (Math.abs(e.clientX - p.x) > 4 || Math.abs(e.screenY - p.sy) > 4)) p.moved = true;
       if (!p.moved) return;
       // 위로 들어 올리기: 창이 커지면 clientY가 바뀌므로 화면 좌표(screenY)로 잰다
-      const up = Math.max(0, Math.min(p.sy - e.screenY, window.innerHeight - 140));
+      const up = Math.max(0, Math.min(p.sy - e.screenY, window.innerHeight - petTall(px)));
       setLift(up);
       const w = walkers.current.get(selfId);
       const maxX = Math.max(0, window.innerWidth - SLOT_W * scale);
@@ -886,7 +923,7 @@ export function Overlay() {
         ? [
             ...log.slice(-11),
             {
-              id: Date.now(),
+              id: Date.now() + Math.random(), // 같은 밀리초에 두 개가 와도 key가 겹치지 않게
               sender_id: c.sender_id,
               sender_name: c.sender_id === selfId ? me.name : (roster.find((p) => p.id === c.sender_id)?.name ?? "친구"),
               body: c.body,
@@ -945,9 +982,21 @@ export function Overlay() {
       },
       Math.max(0, vote.endsAt - Date.now()),
     );
+    // 시작한 친구가 나갔거나 결과가 안 오면, 조금 기다렸다가 각자 결과를 낸다.
+    // 투표 id로 정한 난수라 표가 같으면 모두 같은 메뉴가 나온다.
+    const late = setTimeout(
+      () => {
+        const v = voteRef.current;
+        if (!v || v.result || v.id !== vote.id) return;
+        const t = tally(v.votes, v.options);
+        setVote({ ...v, result: { winner: spin(t, seededRand(v.id)), tally: t } });
+      },
+      Math.max(0, vote.endsAt - Date.now()) + VOTE_GRACE_MS,
+    );
     return () => {
       clearInterval(id);
       clearTimeout(end);
+      clearTimeout(late);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vote?.id, !!vote?.result]);
@@ -1143,7 +1192,8 @@ export function Overlay() {
             />
           )}
         </PetSlot>
-        {roster.map((p) => (
+        {/* 꺼진 펫을 먼저 그려서, 겹치면 켜진 펫이 위에 보이고 눌린다 */}
+        {[...roster].sort((a, b) => Number(a.online) - Number(b.online)).map((p) => (
           <PetSlot
             key={p.id}
             peer={p}

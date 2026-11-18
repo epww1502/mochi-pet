@@ -234,6 +234,16 @@ export type RosterPet = PeerState & { online: boolean; lastSeen: number | null }
  * 접속 중인 친구 + 꺼진 친구를 한 줄로. 접속 중인 친구가 먼저(이름순), 꺼진 친구는 최근 접속순.
  * 창에 들어가는 만큼(max)만 세운다.
  */
+/** 오래 안 들어온 친구는 펫을 안 띄운다 */
+export const STALE_MS = 30 * 86_400_000;
+
+/** 이름이 같거나 한쪽이 다른 쪽으로 시작하면(예: "영주"와 "영주 집") 같은 사람의 다른 컴퓨터로 본다 */
+export function samePerson(a: string, b: string): boolean {
+  const n = (v: string) => v.toLowerCase().replace(/\s+/g, "");
+  const [x, y] = [n(a), n(b)].sort((p, q) => p.length - q.length);
+  return x.length >= 2 && y.startsWith(x);
+}
+
 export function buildRoster(peers: PeerState[], members: Member[], selfId: string, max: number, now = Date.now()): RosterPet[] {
   const online = new Set(peers.map((p) => p.id));
   const others = members
@@ -257,12 +267,17 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
         bday: "",
       }),
       online: false,
-      lastSeen: Date.parse(m.last_seen) || null,
+      // 내 컴퓨터 시계가 서버보다 빠르거나 느려도 "앞으로 N분"이 되지 않게
+      lastSeen: Date.parse(m.last_seen) ? Math.min(Date.parse(m.last_seen), now) : null,
     }))
     // 실시간 연결이 잠깐 끊겼어도 앱은 1분마다 접속을 남긴다. 최근에 남겼으면 컴퓨터·인터넷이 켜진 것으로 본다.
     .map((p) => (p.lastSeen && now - p.lastSeen < ONLINE_GRACE_MS ? { ...p, online: true } : p))
+    .filter((p) => p.online || !p.lastSeen || now - p.lastSeen < STALE_MS)
     .sort((a, b) => Number(b.online) - Number(a.online) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
-  return [...peers.map((p) => ({ ...p, online: true, lastSeen: null })), ...others].slice(0, max);
+  const live = [...peers.map((p) => ({ ...p, online: true, lastSeen: null })), ...others.filter((p) => p.online)];
+  // 꺼진 펫 중 지금 켜진 펫과 같은 사람(다른 컴퓨터)으로 보이면 빼서 한 사람이 두 번 보이지 않게
+  const away = others.filter((p) => !p.online && !live.some((l) => samePerson(l.name, p.name)));
+  return [...live, ...away].slice(0, max);
 }
 
 /** "방금", "5분 전", "3시간 전", "2일 전" */

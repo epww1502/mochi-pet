@@ -41,6 +41,21 @@ export function spin(t: Record<string, number>, rand: () => number = Math.random
   return pool[pool.length - 1][0];
 }
 
+/** 같은 글자면 어느 컴퓨터에서나 같은 순서로 나오는 0~1 난수 (투표 시작한 친구가 사라졌을 때 모두 같은 결과를 내려고) */
+export function seededRand(seed: string): () => number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+  return () => {
+    h = (h + 0x6d2b79f5) | 0;
+    let t = Math.imul(h ^ (h >>> 15), 1 | h);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 시작한 친구의 결과가 이만큼 늦으면 각자 결과를 낸다 */
+export const VOTE_GRACE_MS = 5000;
+
 export type GameMsg =
   | { t: "feed"; by: string; from: string; target: string; food: Food }
   | { t: "rps"; id: string; by: string; from: string; target: string; choice: Rps }
