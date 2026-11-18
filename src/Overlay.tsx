@@ -63,7 +63,7 @@ const FLIGHT_MS = 900;
 /** 열지 않은 선물 상자가 남아 있는 시간 */
 const GIFT_KEEP_MS = 3 * 60_000;
 /** 새 버전 확인 간격 */
-const UPDATE_CHECK_MS = 6 * 60 * 60_000;
+const UPDATE_CHECK_MS = 60 * 60_000; // 1시간마다
 
 type Chat = { sender_id: string; body: string; at: number };
 type MoodFx = { kind: Motion; at: number };
@@ -161,15 +161,25 @@ export function Overlay() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 자동 업데이트: 켤 때와 6시간마다 새 버전을 확인한다 (못 하면 조용히 넘어간다)
+  // 자동 업데이트: 켤 때와 1시간마다 새 버전을 확인한다 (못 하면 조용히 넘어간다).
+  // 메뉴에서 직접 누르면(manual) 최신이거나 못 했을 때도 알려 준다.
+  function lookForUpdate(manual = false) {
+    check()
+      .then((u) => {
+        if (u) setUpdate(u);
+        else if (manual) {
+          const msg = "지금이 최신 버전이에요";
+          setError(msg);
+          setTimeout(() => setError((e) => (e === msg ? null : e)), 4000); // 알림만이니 잠깐 뒤 지운다
+        }
+      })
+      .catch(() => manual && setError("업데이트를 확인하지 못했어요. 인터넷 연결을 봐 주세요"));
+  }
   useEffect(() => {
-    const look = () =>
-      check()
-        .then((u) => u && setUpdate(u))
-        .catch(() => {});
-    look();
-    const id = setInterval(look, UPDATE_CHECK_MS);
+    lookForUpdate();
+    const id = setInterval(() => lookForUpdate(), UPDATE_CHECK_MS);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   async function installUpdate() {
     if (!update) return;
@@ -869,6 +879,7 @@ export function Overlay() {
           ...s.rooms
             .filter((r) => r.id !== s.room?.id)
             .map((r) => ({ id: `room-${r.id}`, text: `🏠 ${r.name}(으)로 방 바꾸기`, action: () => saveSettings({ room: r }) })),
+          { id: "update", text: "업데이트 확인", action: () => lookForUpdate(true) },
           { id: "quit", text: "펫 종료", action: () => invoke("quit_app") },
         ],
       });
