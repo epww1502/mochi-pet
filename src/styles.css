@@ -1543,3 +1543,43 @@ html[data-view="settings"] body {
   padding: 0;
   border: 0;
 }
+
+/* 내 방 목록 */
+.room-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.room-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--soft);
+  font-size: 13px;
+}
+.room-list li.here {
+  outline: 2px solid var(--line);
+}
+.room-list li .muted {
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+.room-list .inline button {
+  padding: 4px 10px;
+}
+.room-list .hint {
+  margin: 0;
+}
+.more-room {
+  margin-top: 10px;
+  font-size: 13px;
+}
+.more-room summary {
+  cursor: pointer;
+  color: #8a7d72;
+}

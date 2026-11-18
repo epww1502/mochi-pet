@@ -864,6 +864,10 @@ export function Overlay() {
           ...(Object.keys(s.hidden).length > 1
             ? [{ id: "show-all", text: "숨긴 친구 모두 다시 보기", action: () => saveSettings({ hidden: {} }) }]
             : []),
+          // 들어갔던 다른 방으로 바로 바꾸기
+          ...s.rooms
+            .filter((r) => r.id !== s.room?.id)
+            .map((r) => ({ id: `room-${r.id}`, text: `🏠 ${r.name}(으)로 방 바꾸기`, action: () => saveSettings({ room: r }) })),
           { id: "quit", text: "펫 종료", action: () => invoke("quit_app") },
         ],
       });

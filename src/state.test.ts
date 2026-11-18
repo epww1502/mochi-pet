@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, cleanHatScale, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -277,5 +277,22 @@ describe("cleanMsg", () => {
     expect(cleanMsg("  점심\n먹는 중  ")).toBe("점심 먹는 중");
     expect(cleanMsg("가".repeat(40))).toHaveLength(24);
     expect(cleanMsg(42)).toBe("");
+  });
+});
+
+describe("방 목록", () => {
+  const a = { id: "a", code: "AAAAAA", name: "우리 방" };
+  const b = { id: "b", code: "BBBBBB", name: "회사" };
+  it("지금 방은 꼭 넣고, 같은 방은 하나만, 이상한 값은 버린다", () => {
+    expect(cleanRooms(undefined, a)).toEqual([a]);
+    expect(cleanRooms([a, a, { id: 1 }, null], b)).toEqual([a, b]);
+    expect(cleanRooms("x", null)).toEqual([]);
+  });
+  it("이미 있으면 이름만 새로, 많으면 오래된 것부터 뺀다", () => {
+    expect(withRoom([a, b], { ...a, name: "새 이름" })).toEqual([{ ...a, name: "새 이름" }, b]);
+    const many = Array.from({ length: ROOMS_MAX }, (_, i) => ({ id: `r${i}`, code: "CCCCCC", name: `방${i}` }));
+    const next = withRoom(many, a);
+    expect(next).toHaveLength(ROOMS_MAX);
+    expect(next[next.length - 1]).toEqual(a);
   });
 });

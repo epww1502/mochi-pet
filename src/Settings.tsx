@@ -8,7 +8,7 @@ import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
 import { HOLIDAYS } from "./events";
 import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
-import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, saveSettings, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
+import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -52,7 +52,7 @@ export function Settings() {
     const { data, error } = await promise;
     const room = (data as Room[] | null)?.[0];
     if (error || !room) return setMsg(failText);
-    saveSettings({ room });
+    saveSettings({ room, rooms: withRoom(s.rooms, room) });
     setCode("");
     setRoomName("");
   }
@@ -352,8 +352,9 @@ export function Settings() {
                     onClick={async () => {
                       if (!confirm(`'${s.room!.name}' 방에서 나갈까요?`)) return;
                       // 친구들 화면에서 내 회색 펫도 지운다 (실패해도 나가기는 한다)
-                      await supabase.rpc("leave_room", { p_room: s.room!.id, p_device: s.deviceId });
-                      saveSettings({ room: null });
+                      const left = s.room!.id;
+                      await supabase.rpc("leave_room", { p_room: left, p_device: s.deviceId });
+                      saveSettings({ room: null, rooms: s.rooms.filter((r) => r.id !== left) });
                     }}
                   >
                     나가기
@@ -377,6 +378,56 @@ export function Settings() {
               </>
             )}
             {msg && tab === "friends" && <p className="error">{msg}</p>}
+            {s.rooms.length > 1 && (
+              <>
+                <div className="label">내 방 목록</div>
+                <ul className="room-list">
+                  {s.rooms.map((r) => {
+                    const here = s.room?.id === r.id;
+                    return (
+                      <li key={r.id} className={here ? "here" : ""}>
+                        <span>
+                          <b>{r.name}</b> <span className="muted">{r.code}</span>
+                        </span>
+                        {here ? (
+                          <span className="hint">지금 방</span>
+                        ) : (
+                          <span className="inline">
+                            <button onClick={() => saveSettings({ room: r })}>바꾸기</button>
+                            <button
+                              className="ghost"
+                              title="목록에서만 지워요 (친구 화면엔 꺼진 펫으로 남아요)"
+                              aria-label={`${r.name} 목록에서 지우기`}
+                              onClick={() => saveSettings({ rooms: s.rooms.filter((x) => x.id !== r.id) })}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="hint">방을 바꿔도 이전 방에서 나가지는 않아요. 언제든 다시 돌아올 수 있어요.</p>
+              </>
+            )}
+            {s.room && (
+              <details className="more-room">
+                <summary>다른 방 들어가기 · 새 방 만들기</summary>
+                <div className="label">초대 코드로 들어가기</div>
+                <div className="inline">
+                  <input aria-label="초대 코드" value={code} maxLength={6} placeholder="예: 26MMRA" onChange={(e) => setCode(e.target.value.toUpperCase())} />
+                  <button disabled={code.trim().length !== 6} onClick={() => enter(supabase.rpc("join_room", { p_code: code }), "그런 코드의 방이 없어요")}>
+                    들어가기
+                  </button>
+                </div>
+                <div className="label">새 방 만들기</div>
+                <div className="inline">
+                  <input aria-label="방 이름" value={roomName} maxLength={30} placeholder="방 이름 (비우면 '우리 방')" onChange={(e) => setRoomName(e.target.value)} />
+                  <button onClick={() => enter(supabase.rpc("create_room", { p_name: roomName }), "방을 만들지 못했어요")}>만들기</button>
+                </div>
+              </details>
+            )}
           </section>
 
           <section>

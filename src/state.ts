@@ -14,6 +14,25 @@ export const supabase = createClient(
 
 export type Room = { id: string; code: string; name: string };
 
+/** 들어갔던 방 목록 (이 컴퓨터에만). 많아야 이만큼 */
+export const ROOMS_MAX = 10;
+const isRoom = (r: unknown): r is Room => {
+  const o = r as Record<string, unknown> | null;
+  return !!o && typeof o === "object" && [o.id, o.code, o.name].every((v) => typeof v === "string" && v.length > 0 && v.length <= 80);
+};
+/** 방 목록 정리: 모양이 맞는 것만, 같은 방은 하나만, 지금 방은 꼭 넣는다 */
+export function cleanRooms(v: unknown, current: unknown = null): Room[] {
+  const list = (Array.isArray(v) ? v : []).filter(isRoom).reduce<Room[]>((acc, r) => withRoom(acc, r), []);
+  return withRoom(list, isRoom(current) ? current : null);
+}
+/** 방을 목록에 넣는다 (이미 있으면 이름·코드만 새로) */
+export function withRoom(rooms: Room[], room: Room | null): Room[] {
+  if (!room) return rooms.slice(0, ROOMS_MAX);
+  const i = rooms.findIndex((r) => r.id === room.id);
+  if (i >= 0) return rooms.map((r, j) => (j === i ? { id: room.id, code: room.code, name: room.name } : r)).slice(0, ROOMS_MAX);
+  return [...rooms, { id: room.id, code: room.code, name: room.name }].slice(-ROOMS_MAX);
+}
+
 export type Settings = {
   deviceId: string;
   name: string;
@@ -22,6 +41,8 @@ export type Settings = {
   /** 가져온 그림(64x64 이하 PNG data URL). 있으면 캐릭터 대신 쓴다. */
   image: string | null;
   room: Room | null;
+  /** 들어갔던 방들. 여기서 골라 바로 바꿀 수 있다 */
+  rooms: Room[];
   /** 픽셀 한 칸의 화면 크기(px). 펫, 이름표, 말풍선, 창이 이 비율로 같이 커진다. */
   px: number;
   /** 바쁨(방해 금지): 친구에게 빨간 불로 보이고, 답장 추천을 띄우지 않는다 */
@@ -92,13 +113,15 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, rooms: [], px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
       ...base,
       ...saved,
       px: pxOf(saved),
+      room: isRoom(saved.room) ? saved.room : null,
+      rooms: cleanRooms(saved.rooms, saved.room),
       labelPos: saved.labelPos === "below" ? "below" : "above",
       hat: isHat(saved.hat) ? saved.hat : null,
       hatOffset: cleanHatOffset(
