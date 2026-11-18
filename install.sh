@@ -6,7 +6,7 @@ set -eu
 case "$(uname -sm)" in
   "Darwin arm64") T=aarch64-apple-darwin ;;
   "Darwin x86_64") T=x86_64-apple-darwin ;;
-  *) echo "이 설치 스크립트는 macOS용이에요. Windows는 Releases 페이지에서 zip을 받아 주세요."; exit 1 ;;
+  *) echo "이 설치 스크립트는 macOS용이에요. Windows는 mochi-pet-windows-setup.exe를 받아 주세요: https://github.com/epww1502/mochi-pet/releases/latest"; exit 1 ;;
 esac
 
 DIR="${MOCHI_PET_DIR:-$HOME/.local/bin}"

@@ -7,15 +7,30 @@
 - **채팅**: 내 펫을 클릭하고 입력, Enter. 말풍선으로 7초 뜨고, 설정 창에서 최근 대화를 볼 수 있다.
 - **캐릭터**: 찹쌀떡, 고양이, 곰, 유령 x 6가지 색. 또는 내 그림(PNG, JPG 등)을 가져오면 32x32 픽셀로 줄여서 쓴다. 친구 화면에도 그대로 보인다.
 
+- **크기**: 아주 작게 ~ 아주 크게 5단계. 펫, 이름표, 말풍선이 같이 커진다.
+
 ## 설치
 
-macOS:
+| 내 컴퓨터 | 받기 |
+|---|---|
+| 맥 (M1 이후, Apple Silicon) | [mochi-pet-mac-apple-silicon.dmg](https://github.com/epww1502/mochi-pet/releases/latest/download/mochi-pet-mac-apple-silicon.dmg) |
+| 맥 (Intel) | [mochi-pet-mac-intel.dmg](https://github.com/epww1502/mochi-pet/releases/latest/download/mochi-pet-mac-intel.dmg) |
+| 윈도우 | [mochi-pet-windows-setup.exe](https://github.com/epww1502/mochi-pet/releases/latest/download/mochi-pet-windows-setup.exe) |
+
+내 맥이 어느 쪽인지 모르면: 왼쪽 위 사과 메뉴 → 이 Mac에 관하여 → "칩"에 Apple M이 있으면 Apple Silicon, "프로세서"에 Intel이 있으면 Intel.
+
+**맥**: dmg를 열고 mochi-pet을 응용 프로그램 폴더로 끌어다 놓는다. 개발자 서명이 없는 앱이라 처음 열 때 "확인되지 않은 개발자" 경고가 뜬다.
+1. 한 번 열어 보고 경고가 뜨면 닫는다.
+2. 시스템 설정 → 개인정보 보호 및 보안 → 아래쪽 "mochi-pet이(가) 차단되었습니다" 옆 **그래도 열기**.
+3. 다시 열면 된다. 다음부터는 바로 열린다.
+
+**윈도우**: 설치 파일을 실행한다. "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**. 관리자 권한 없이 내 계정에만 설치된다.
+
+터미널이 편하면 맥은 이 한 줄로도 된다(경고 없이 `~/.local/bin/mochi-pet`에 설치):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/epww1502/mochi-pet/main/install.sh | sh
 ```
-
-`~/.local/bin/mochi-pet`에 설치된다. Windows는 [Releases](https://github.com/epww1502/mochi-pet/releases)에서 zip을 받는다.
 
 ## 사용
 
