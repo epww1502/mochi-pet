@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { HatId } from "./decor";
-import { CANVAS_H, CANVAS_W, drawImagePet, drawPet, type CharacterId, type HatOffset, type Mood, type Walk } from "./sprites";
+import { CANVAS_H, CANVAS_W, CHARACTERS, drawImagePet, drawPet, hatHeadroom, type CharacterId, type HatOffset, type Mood, type Walk } from "./sprites";
 
 type Props = {
   character: CharacterId;
@@ -34,6 +34,8 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
   // 캔버스를 화면의 실제 픽셀로 그린다. 한 칸 = 정수 개의 실제 픽셀이라 늘려 보일 때 뭉개지지 않는다.
   const cell = Math.max(1, Math.round(px * dpr));
   const [dx, dy] = hatOffset; // 배열은 매번 새로 오니 숫자로 풀어서 그리기 루프 의존성에 쓴다
+  // 모자를 높이 올렸거나 크게 했으면 캔버스를 위로 늘린다 (아래는 그대로라 펫 자리는 안 바뀐다)
+  const rows = CANVAS_H + (hat ? hatHeadroom(image ? 0 : CHARACTERS[character].headY, dy, hatScale) : 0);
   // 걷기 상태는 자주 바뀌므로 그리기 루프를 다시 만들지 않고 ref로 읽는다
   const walkRef = useRef(walk);
   walkRef.current = walk;
@@ -51,13 +53,13 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
     tick();
     const id = setInterval(tick, 80); // 초당 약 12번: 상시 실행이라 가볍게
     return () => clearInterval(id);
-  }, [character, color, image, mood, cell, hat, dx, dy, hatScale]);
+  }, [character, color, image, mood, cell, hat, dx, dy, hatScale, rows]);
   return (
     <canvas
       ref={ref}
       width={CANVAS_W * cell}
-      height={CANVAS_H * cell}
-      style={{ width: (CANVAS_W * cell) / dpr, height: (CANVAS_H * cell) / dpr }}
+      height={rows * cell}
+      style={{ width: (CANVAS_W * cell) / dpr, height: (rows * cell) / dpr }}
       className="pixel"
     />
   );

@@ -198,7 +198,7 @@ export function withHat(g: Grid, hat: HatId | null | undefined, headY = 1, [dx, 
 /** 모자를 원래 자리에서 옮긴 칸 수 [오른쪽, 아래]. 설정 미리보기에서 끌어서 정한다. */
 export type HatOffset = readonly [number, number];
 export const HAT_DX_MAX = 5;
-export const HAT_DY_MIN = -2; // 위로는 캔버스 여유만큼만
+export const HAT_DY_MIN = -8; // 위로 올리면 캔버스가 그만큼 위로 늘어난다 (hatHeadroom)
 export const HAT_DY_MAX = 8;
 
 /** 모자 크기 (1 = 원래 크기). 슬라이더로 0.5~1.5배, 0.05 단위 */
@@ -243,12 +243,18 @@ function paintScaledHat(ctx: CanvasRenderingContext2D, px: number, hat: HatId, c
   );
 }
 
+/** 모자를 위로 올릴 수 있는 한계. 모든 펫이 같다 (넘치는 만큼 캔버스를 위로 늘린다) */
+export function hatDyMin(_character?: CharacterId, _image?: boolean): number {
+  return HAT_DY_MIN;
+}
+
 /**
- * 모자를 위로 올릴 수 있는 한계. 캔버스 위 여유가 펫마다 달라서, 숨쉬며 1칸 뜰 때 모자 윗줄이 잘리지 않을 만큼만.
- * 머리가 맨 윗줄인 펫(찹쌀떡·유령)은 1칸, 그림 펫은 그림이 꽉 찰 수 있어 못 올린다.
+ * 모자가 캔버스 위로 넘치지 않게 위에 더 붙일 칸 수.
+ * 펫 위 여유는 4칸(CANVAS_H - 14)이고, 숨쉬며 1칸 뜨는 것까지 남긴다.
  */
-export function hatDyMin(character: CharacterId, image: boolean): number {
-  return image ? 0 : Math.max(HAT_DY_MIN, -CHARACTERS[character].headY);
+export function hatHeadroom(headY: number, dy: number, scale = 1): number {
+  const above = Math.ceil(4 * scale - (headY + dy + 1)) + 1; // 펫 맨 윗줄 위로 필요한 칸
+  return Math.max(0, above - (CANVAS_H - 14));
 }
 
 /** 저장된 값이나 친구가 보낸 값을 범위 안의 정수로. 이상하면 제자리. */
@@ -362,7 +368,8 @@ export function drawPet(
   if (mood === "slip") g = rotateRight(g);
   if (w.faceLeft) g = mirror(g);
   const left = w.x + sway(mood, t) + Math.floor((16 - g[0].length) / 2);
-  const top = CANVAS_H - g.length - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
+  const H = Math.round(ctx.canvas.height / px); // 모자를 올리면 캔버스가 위로 늘어나 있다
+  const top = H - g.length - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
   if (scaled && hat) {
     let x0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     g = g.map((row, y) =>
@@ -375,7 +382,7 @@ export function drawPet(
     paint(ctx, px, g, left, top);
     if (x1 >= 0) paintScaledHat(ctx, px, hat, (left + (x0 + x1 + 1) / 2) * px, (top + y1 + 1) * px, hatScale, w.faceLeft);
   } else paint(ctx, px, g, left, top);
-  drawExtras(ctx, px, w.x, CANVAS_H - 14 - hop(mood, t), mood, t);
+  drawExtras(ctx, px, w.x, H - 14 - hop(mood, t), mood, t);
 }
 export function drawImagePet(
   ctx: CanvasRenderingContext2D,
@@ -390,7 +397,8 @@ export function drawImagePet(
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
-  const top = CANVAS_H - 14 - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
+  const H = Math.round(ctx.canvas.height / px);
+  const top = H - 14 - hop(mood, t) - (w.moving ? Math.floor(t * 8) % 2 : 0);
   const fit = fitImage(img.naturalWidth, img.naturalHeight, 14 * px);
   const h = mood === "sleep" ? Math.round(fit.h / 2) : fit.h; // 잘 땐 납작
   ctx.save();
@@ -442,13 +450,13 @@ function drawExtras(ctx: CanvasRenderingContext2D, px: number, left: number, top
     ctx.fillRect(Math.round(x + left) * px, Math.round(y) * px, px, px);
   };
   if (mood === "away") drawZ(ctx, px, left + 13, top + 1, t);
-  if (mood === "sleep") drawZ(ctx, px, left + 12, CANVAS_H - 7, t);
+  if (mood === "sleep") drawZ(ctx, px, left + 12, top + 7, t);
   if (mood === "happy") {
     const lift = Math.floor(t * 3) % 2; // 하트가 살짝 떠올랐다 내려온다
     HEART.forEach((row, y) => [...row].forEach((c, x) => c === "x" && dot(11 + x, y - lift + 1, "#ff6b8a")));
   }
   if (mood === "dizzy" || mood === "slip") {
-    const cy = mood === "slip" ? CANVAS_H - 9 : top + 0.5;
+    const cy = mood === "slip" ? top + 5 : top + 0.5;
     for (const phase of [0, Math.PI]) dot(7.5 + Math.cos(t * 7 + phase) * 6, cy + Math.sin(t * 7 + phase), "#ffc93c");
   }
   if (mood === "sad") {
