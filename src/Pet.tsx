@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { contentBox } from "./picture";
 import type { HatId } from "./decor";
 import { CANVAS_H, CANVAS_W, CHARACTERS, drawImagePet, drawPet, hatHeadroom, type CharacterId, type HatOffset, type Mood, type Walk } from "./sprites";
 
@@ -43,11 +44,15 @@ export function PetCanvas({ character, color, image, mood, px = 5, walk = null, 
     const ctx = ref.current?.getContext("2d");
     if (!ctx) return;
     const img = image ? Object.assign(new Image(), { src: image }) : null;
+    let content: { top: number; cx: number } | undefined; // 그림이 실제로 있는 자리 (처음 그릴 때 한 번 잰다)
     const born = performance.now();
     const tick = () => {
       const t = (performance.now() - born) / 1000;
       if (img) {
-        if (img.complete) drawImagePet(ctx, cell, img, mood, t, walkRef.current, hat, [dx, dy], hatScale);
+        if (img.complete && img.naturalWidth) {
+          content ??= contentBox(img);
+          drawImagePet(ctx, cell, img, mood, t, walkRef.current, hat, [dx, dy], hatScale, content);
+        }
       } else drawPet(ctx, cell, character, color, mood, t, walkRef.current, hat, [dx, dy], hatScale);
     };
     tick();

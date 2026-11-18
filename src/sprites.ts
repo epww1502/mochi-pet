@@ -394,6 +394,8 @@ export function drawImagePet(
   hat: HatId | null = null,
   [dx, dy]: HatOffset = [0, 0],
   hatScale = 1,
+  /** 그림이 실제로 있는 자리(비율): 꼭대기, 가운데. 여백이 있어도 모자가 머리에 앉게 */
+  content: { top: number; cx: number } = { top: 0, cx: 0.5 },
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   const w = { x: HOME_X, moving: !!walk?.moving && mood === "idle", faceLeft: !!walk?.faceLeft };
@@ -415,9 +417,10 @@ export function drawImagePet(
   if (hat && mood !== "slip") {
     // 그림 윗변에 모자 아랫줄이 걸치게 (+ 옮긴 만큼. 왼쪽을 보면 좌우도 반대로)
     const hatGrid = withHat([Array(16).fill(null)], hat, 0).slice(0, 4);
-    const left = w.x + sway(mood, t) + (w.faceLeft ? -dx : dx);
+    const shift = Math.round(((content.cx - 0.5) * fit.w) / px); // 그림이 한쪽에 치우쳐 있으면 모자도 그쪽으로
+    const left = w.x + sway(mood, t) + (w.faceLeft ? -dx - shift : dx + shift);
     const sleepDy = mood === "sleep" ? Math.round(dy / 2) : dy; // 잘 땐 그림이 반으로 납작해지니 옮긴 거리도 반
-    const hatTop = Math.round((bottom - h) / px) - 3 + sleepDy;
+    const hatTop = Math.round((bottom - h + content.top * h) / px) - 3 + sleepDy;
     if (hatScale === 1) paint(ctx, px, w.faceLeft ? mirror(hatGrid) : hatGrid, left, hatTop);
     else {
       const { x0, x1, y1 } = hatBox(hat);

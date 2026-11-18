@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { isHat, isSeason, isTag, type HatId, type SeasonId, type TagId } from "./decor";
 import { safePlace, type Place } from "./weather";
 import { cleanBday, cleanTime } from "./events";
+import { cleanFit, trimCanvas, type PictureFit } from "./picture";
 import { CHARACTERS, cleanHatOffset, cleanHatScale, hatDyMin, type CharacterId, type HatOffset, type HatScale, type Mood, type Motion } from "./sprites";
 
 // 공개해도 되는 키(publishable). 테이블은 RLS로 잠겨 있고 함수로만 접근한다.
@@ -40,6 +41,10 @@ export type Settings = {
   color: string;
   /** 가져온 그림(64x64 이하 PNG data URL). 있으면 캐릭터 대신 쓴다. */
   image: string | null;
+  /** 칸 맞추기 전 원본 그림 (이 컴퓨터에만, 친구에겐 image만 간다) */
+  imageOrig: string | null;
+  /** 원본을 칸 안에서 옮기고 키운 값 */
+  imageFit: PictureFit;
   room: Room | null;
   /** 들어갔던 방들. 여기서 골라 바로 바꿀 수 있다 */
   rooms: Room[];
@@ -113,13 +118,15 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, rooms: [], px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, imageOrig: null, imageFit: { x: 0, y: 0, zoom: 1 }, room: null, rooms: [], px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
       ...base,
       ...saved,
       px: pxOf(saved),
+      imageOrig: typeof saved.imageOrig === "string" && saved.imageOrig.startsWith("data:image/png;base64,") ? saved.imageOrig : null,
+      imageFit: cleanFit(saved.imageFit),
       room: isRoom(saved.room) ? saved.room : null,
       rooms: cleanRooms(saved.rooms, saved.room),
       labelPos: saved.labelPos === "below" ? "below" : "above",
@@ -342,8 +349,18 @@ export function safeImage(url: unknown): string | null {
  * 더 큰 그림은 비율을 유지해 64칸 안으로 부드럽게 줄인다. 너무 무거우면 48, 32칸으로 다시 줄인다.
  */
 export async function importImage(file: File): Promise<string> {
-  const bitmap = await createImageBitmap(file);
-  try {
+  const raw = await createImageBitmap(file);
+  // 빈 테두리를 먼저 잘라 낸다 (여백이 많으면 펫이 작게 떠 보인다). 아주 큰 그림은 512칸으로 줄여서 찾는다.
+  const pre = Math.min(1, 512 / Math.max(raw.width, raw.height));
+  const full = document.createElement("canvas");
+  full.width = Math.max(1, Math.round(raw.width * pre));
+  full.height = Math.max(1, Math.round(raw.height * pre));
+  const fctx = full.getContext("2d")!;
+  fctx.imageSmoothingEnabled = pre < 1;
+  fctx.drawImage(raw, 0, 0, full.width, full.height);
+  raw.close();
+  const bitmap = trimCanvas(full);
+  {
     for (const max of [64, 48, 32]) {
       const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
       const canvas = document.createElement("canvas");
@@ -357,8 +374,6 @@ export async function importImage(file: File): Promise<string> {
       if (safeImage(url)) return url;
     }
     throw new Error("그림이 너무 복잡해요");
-  } finally {
-    bitmap.close();
   }
 }
 
