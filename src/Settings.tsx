@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
-import { CHARACTERS, COLORS, HAT_SCALES, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset, type HatScale } from "./sprites";
+import { CHARACTERS, COLORS, HAT_SCALE_MAX, HAT_SCALE_MIN, HAT_SCALE_STEP, cleanHatOffset, cleanHatScale, hatDyMin, type CharacterId, type HatOffset, type HatScale } from "./sprites";
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
 import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
@@ -566,6 +566,11 @@ function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editin
         }}
         onPointerUp={() => setDrag(null)}
         onPointerCancel={() => setDrag(null)}
+        onWheel={(e) => {
+          // 휠로도 모자 크기를 바꾼다 (위로 굴리면 크게)
+          if (!editing) return;
+          setScaleDraft((v) => cleanHatScale(v + (e.deltaY < 0 ? HAT_SCALE_STEP : -HAT_SCALE_STEP)));
+        }}
         onKeyDown={(e) => {
           if (!editing) return;
           if (e.key === "Enter") return save();
@@ -580,13 +585,22 @@ function PreviewWithHatDrag({ s, editing, setEditing }: { s: PetSettings; editin
       </div>
       {editing && (
         <div className="hat-edit-bar" role="group" aria-label="모자 위치·크기 조절">
-          <span className="hint">모자를 끌어서 옮겨요 · 방향키로 한 칸씩</span>
-          <Segmented
-            label="모자 크기"
-            value={scaleDraft}
-            options={HAT_SCALES.map((v) => [v, v < 1 ? "작게" : v > 1 ? "크게" : "보통"])}
-            onChange={setScaleDraft}
-          />
+          <span className="hint">모자를 끌어서 옮기고, 크기는 슬라이더나 휠로</span>
+          <label className="hat-size">
+            <span>
+              크기 <output>{Math.round(scaleDraft * 100)}%</output>
+            </span>
+            <input
+              type="range"
+              aria-label="모자 크기"
+              min={HAT_SCALE_MIN}
+              max={HAT_SCALE_MAX}
+              step={HAT_SCALE_STEP}
+              value={scaleDraft}
+              aria-valuetext={`${Math.round(scaleDraft * 100)}%`}
+              onChange={(e) => setScaleDraft(Number(e.target.value))}
+            />
+          </label>
           <div className="inline">
             <button className="ghost" disabled={atHome} onClick={() => (setDraft([0, 0]), setScaleDraft(1))}>
               처음대로

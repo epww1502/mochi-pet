@@ -65,7 +65,7 @@ export type Settings = {
 };
 
 /** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
-export const PX_MIN = 3;
+export const PX_MIN = 2; // 40%
 export const PX_MAX = 12;
 export const PX_DEFAULT = 5;
 export const percentOf = (px: number) => px * 20;

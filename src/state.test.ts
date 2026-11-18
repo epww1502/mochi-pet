@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHARACTERS, fitImage } from "./sprites";
+import { CHARACTERS, cleanHatScale, fitImage } from "./sprites";
 import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, buildRoster, cleanFriendPx, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
@@ -36,10 +36,17 @@ describe("presenceToPeers", () => {
     const old = { ...peer("a", "가람") } as Partial<PeerState>;
     delete old.hatScale;
     const peers = presenceToPeers(
-      { a: [old as PeerState], b: [peer("b", "나래", { hatScale: 1.25 })], c: [peer("c", "다온", { hatScale: 9 as unknown as 1 })] },
+      { a: [old as PeerState], b: [peer("b", "나래", { hatScale: 1.25 })], c: [peer("c", "다온", { hatScale: "big" as unknown as number })] },
       "me",
     );
     expect(peers.map((p) => p.hatScale)).toEqual([1, 1.25, 1]);
+  });
+
+  it("모자 크기는 0.5~1.5배, 0.05 단위로 맞춘다", () => {
+    expect(cleanHatScale(0.73)).toBe(0.75);
+    expect(cleanHatScale(9)).toBe(1.5);
+    expect(cleanHatScale(0.1)).toBe(0.5);
+    expect(cleanHatScale(Number.NaN)).toBe(1);
   });
 
   it("친구가 정한 펫 크기를 쓰되, 범위 밖이면 맞춘다", () => {
@@ -110,7 +117,7 @@ describe("pxOf", () => {
     expect(pxOf({ px: 8, size: "xs" })).toBe(8);
     expect(pxOf({ px: 6.6 })).toBe(7);
     expect(pxOf({ px: 99 })).toBe(12);
-    expect(pxOf({ px: 0 })).toBe(3);
+    expect(pxOf({ px: 0 })).toBe(2); // 가장 작게 40%
   });
 
   it("값이 없거나 이상하면 보통(100%)이다", () => {

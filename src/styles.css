@@ -1521,3 +1521,25 @@ html[data-view="settings"] body {
   box-shadow: none;
   padding: 4px 0;
 }
+
+/* 모자 크기 슬라이더 (모자 조절 중) */
+.settings label.hat-size {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 280px;
+  margin: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.settings label.hat-size output {
+  display: inline-block;
+  min-width: 3.2em;
+  color: #8a7d72;
+  font-weight: 400;
+}
+.settings label.hat-size input[type="range"] {
+  padding: 0;
+  border: 0;
+}

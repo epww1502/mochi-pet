@@ -201,11 +201,15 @@ export const HAT_DX_MAX = 5;
 export const HAT_DY_MIN = -2; // 위로는 캔버스 여유만큼만
 export const HAT_DY_MAX = 8;
 
-/** 모자 크기 단계 (1 = 원래 크기). 캔버스 위 여유가 4칸뿐이라 크게는 1.25배까지 */
-export const HAT_SCALES = [0.75, 1, 1.25] as const;
-export type HatScale = (typeof HAT_SCALES)[number];
+/** 모자 크기 (1 = 원래 크기). 슬라이더로 0.5~1.5배, 0.05 단위 */
+export const HAT_SCALE_MIN = 0.5;
+export const HAT_SCALE_MAX = 1.5;
+export const HAT_SCALE_STEP = 0.05;
+export type HatScale = number;
 export function cleanHatScale(v: unknown): HatScale {
-  return (HAT_SCALES as readonly unknown[]).includes(v) ? (v as HatScale) : 1;
+  if (typeof v !== "number" || !Number.isFinite(v)) return 1;
+  const r = Math.round(v / HAT_SCALE_STEP) * HAT_SCALE_STEP;
+  return Math.round(Math.min(HAT_SCALE_MAX, Math.max(HAT_SCALE_MIN, r)) * 100) / 100;
 }
 const HAT_MARK = "H|";
 
@@ -227,7 +231,8 @@ function paintScaledHat(ctx: CanvasRenderingContext2D, px: number, hat: HatId, c
   const { x0, x1, y0, y1 } = hatBox(hat);
   if (x1 < 0) return;
   const left = Math.round(cx - ((x1 - x0 + 1) * hp) / 2);
-  const top = Math.round(bottom - (y1 - y0 + 1) * hp);
+  // 크게 하면 캔버스 위로 넘칠 수 있다 → 그만큼 내려서 잘리지 않게
+  const top = Math.max(0, Math.round(bottom - (y1 - y0 + 1) * hp));
   HATS[hat].rows.forEach((row, y) =>
     [...row].forEach((c, x) => {
       const color = HAT_COLORS[c];
