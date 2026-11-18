@@ -19,12 +19,23 @@ export type Settings = {
   /** 가져온 그림(32x32 PNG data URL). 있으면 캐릭터 대신 쓴다. */
   image: string | null;
   room: Room | null;
+  /** 화면에 보이는 펫 크기. 펫, 이름표, 말풍선, 창이 같이 커진다. */
+  size: SizeId;
 };
+
+/** 픽셀 하나의 화면 크기(px). 정수여야 픽셀아트가 또렷하다. 보통(5)을 기준으로 나머지를 비율로 키운다. */
+export const SIZES = { xs: { label: "아주 작게", px: 3 }, s: { label: "작게", px: 4 }, m: { label: "보통", px: 5 }, l: { label: "크게", px: 7 }, xl: { label: "아주 크게", px: 10 } } as const;
+export type SizeId = keyof typeof SIZES;
+
+/** 저장된 값이 이상해도 보통 크기로 */
+export function sizeOf(id: unknown) {
+  return SIZES[Object.prototype.hasOwnProperty.call(SIZES, id as string) ? (id as SizeId) : "m"];
+}
 
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, size: "m" };
   try {
     return { ...base, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
   } catch {

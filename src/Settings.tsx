@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { CHARACTERS, COLORS, type CharacterId } from "./sprites";
-import { importImage, saveSettings, supabase, useSettings, type Room } from "./state";
+import { SIZES, importImage, saveSettings, supabase, useSettings, type Room, type SizeId } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -91,6 +91,14 @@ export function Settings() {
           </label>
         </div>
         <p className="muted small-left">그림은 32x32 픽셀로 줄어들어 친구에게도 보여요. 배경이 투명한 PNG 픽셀아트가 제일 잘 어울려요.</p>
+        <div className="label">크기</div>
+        <div className="choices" role="radiogroup" aria-label="펫 크기">
+          {(Object.keys(SIZES) as SizeId[]).map((id) => (
+            <button key={id} className={`pill${s.size === id ? " on" : ""}`} role="radio" aria-checked={s.size === id} onClick={() => saveSettings({ size: id })}>
+              {SIZES[id].label}
+            </button>
+          ))}
+        </div>
         <div className="label">색</div>
         <div className="choices">
           {COLORS.map((c) => (

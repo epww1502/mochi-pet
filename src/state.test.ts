@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "./sprites";
-import { MAX_IMAGE_CHARS, presenceToPeers, safeImage, type PeerState } from "./state";
+import { MAX_IMAGE_CHARS, presenceToPeers, safeImage, sizeOf, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -57,5 +57,14 @@ describe("캐릭터 그림", () => {
       c.rows.forEach((r, y) => expect(r.length, `${id} ${y}행`).toBe(16));
       for (let y = 6; y <= 10; y++) for (let x = 3; x <= 12; x++) expect(c.rows[y][x], `${id} (${x},${y})`).toMatch(/[bs]/);
     }
+  });
+});
+
+describe("sizeOf", () => {
+  it("예전 버전 설정처럼 크기 값이 없거나 이상하면 보통 크기로 그린다", () => {
+    expect(sizeOf(undefined).px).toBe(5);
+    expect(sizeOf("huge").px).toBe(5);
+    expect(sizeOf("xl").px).toBe(10);
+    expect(sizeOf("xs").px).toBe(3);
   });
 });

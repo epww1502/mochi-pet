@@ -44,8 +44,13 @@ html[data-view="overlay"] body {
   gap: 6px;
 }
 
+/* --s: 펫 크기 배율 (보통 = 1). 오버레이 안의 모든 크기가 따라 커진다. */
+.stage {
+  --s: 1;
+}
+
 .slot {
-  width: 104px;
+  width: calc(104px * var(--s));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -62,12 +67,12 @@ html[data-view="overlay"] body {
 }
 
 .name {
-  font-size: 11px;
+  font-size: max(10px, calc(11px * var(--s))); /* 아주 작게여도 읽히게 */
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 6px;
+  padding: calc(1px * var(--s)) calc(6px * var(--s));
+  border-radius: calc(6px * var(--s));
   background: rgb(255 255 255 / 0.85);
-  max-width: 100px;
+  max-width: calc(100px * var(--s));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -76,16 +81,16 @@ html[data-view="overlay"] body {
 .bubble,
 .chat-input {
   position: relative;
-  margin-bottom: 6px;
+  margin-bottom: calc(6px * var(--s));
   border: 2px solid var(--line);
-  border-radius: 8px;
+  border-radius: calc(8px * var(--s));
   background: var(--paper);
-  font-size: 12px;
-  padding: 4px 8px;
+  font-size: max(10px, calc(12px * var(--s)));
+  padding: calc(4px * var(--s)) calc(8px * var(--s));
 }
 
 .bubble {
-  max-width: 150px;
+  max-width: calc(150px * var(--s));
   text-align: center;
   overflow-wrap: anywhere;
 }
@@ -104,10 +109,10 @@ html[data-view="overlay"] body {
 }
 
 .chat-input {
-  width: 220px;
+  width: calc(220px * var(--s));
   align-self: flex-end;
   font: inherit;
-  font-size: 13px;
+  font-size: max(11px, calc(13px * var(--s)));
   outline: none;
 }
 
@@ -273,6 +278,17 @@ html[data-view="settings"] body {
 .small-left {
   font-size: 12px;
   margin: 8px 0 0;
+}
+
+.settings button.pill {
+  background: var(--soft);
+  color: var(--ink);
+  border: 2px solid transparent;
+}
+
+.settings button.pill.on {
+  border-color: var(--line);
+  font-weight: 700;
 }
 
 .settings button.choice.on {

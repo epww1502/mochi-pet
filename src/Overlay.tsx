@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import { PhysicalPosition, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
+import { PhysicalPosition, PhysicalSize, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { useEffect, useRef, useState } from "react";
 import { Bubble, PetCanvas } from "./Pet";
-import { presenceToPeers, supabase, useSettings, type PeerState } from "./state";
+import { presenceToPeers, sizeOf, supabase, useSettings, type PeerState } from "./state";
 
 const AWAY_AFTER_SEC = 5 * 60;
+/** 보통 크기일 때 창 크기(논리 px). tauri.conf.json의 main 창과 같다. */
+const BASE_WIN = { w: 720, h: 240 };
 const CHAT_SHOW_MS = 7000;
 
 type Chat = { sender_id: string; body: string; at: number };
@@ -36,6 +38,21 @@ export function Overlay() {
     if (!s.name) invoke("open_settings");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 크기: 펫이 커지면 창도 같이 키우되, 오른쪽 아래 모서리는 제자리에 둔다
+  const { px } = sizeOf(s.size);
+  const scale = px / 5;
+  useEffect(() => {
+    (async () => {
+      const w = getCurrentWindow();
+      const [pos, size, sf] = await Promise.all([w.outerPosition(), w.outerSize(), w.scaleFactor()]);
+      const width = Math.round(BASE_WIN.w * scale * sf);
+      const height = Math.round(BASE_WIN.h * scale * sf);
+      if (width === size.width && height === size.height) return;
+      await w.setSize(new PhysicalSize(width, height));
+      await w.setPosition(new PhysicalPosition(pos.x + size.width - width, pos.y + size.height - height));
+    })();
+  }, [scale]);
 
   // 자리 비움: 키보드/마우스 입력이 5분 없으면
   useEffect(() => {
@@ -146,7 +163,7 @@ export function Overlay() {
   };
 
   return (
-    <div className="stage">
+    <div className="stage" style={{ "--s": scale } as React.CSSProperties}>
       {error && (
         <div className="toast" data-hit onClick={() => setError(null)}>
           {error}
@@ -156,6 +173,7 @@ export function Overlay() {
         <PetSlot
           peer={me}
           chat={chats[me.id]}
+          px={px}
           isMe
           onMouseDown={onDown}
           onMouseMove={onMove}
@@ -184,7 +202,7 @@ export function Overlay() {
           )}
         </PetSlot>
         {peers.map((p) => (
-          <PetSlot key={p.id} peer={p} chat={chats[p.id]} />
+          <PetSlot key={p.id} peer={p} chat={chats[p.id]} px={px} />
         ))}
       </div>
     </div>
@@ -194,12 +212,14 @@ export function Overlay() {
 function PetSlot({
   peer,
   chat,
+  px,
   isMe,
   children,
   ...handlers
 }: {
   peer: PeerState;
   chat?: Chat;
+  px: number;
   isMe?: boolean;
   children?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
@@ -208,7 +228,7 @@ function PetSlot({
     <div className="slot">
       {children ?? (text && <Bubble text={text} />)}
       <div className="pet" data-hit {...handlers} title={isMe ? "클릭: 채팅 · 끌기: 이동 · 오른쪽 클릭: 설정" : peer.name}>
-        <PetCanvas character={peer.character} color={peer.color} image={peer.image} mood={peer.status} />
+        <PetCanvas character={peer.character} color={peer.color} image={peer.image} mood={peer.status} px={px} />
       </div>
       <div className="name">{peer.name}</div>
     </div>
