@@ -1,8 +1,12 @@
 // 친구와 하는 작은 놀이: 먹이 주기, 가위바위보, 공 주고받기, 점심 메뉴 투표 룰렛.
 // 모두 방 broadcast("game")로 주고받고, 각자 화면에서 똑같이 그린다.
 
+import { HOLIDAY_FOODS } from "./events";
+
 export const FOODS = ["🍙", "🍪", "🍓", "🍖"] as const;
-export type Food = (typeof FOODS)[number];
+/** 평소 간식 + 기념일 간식 (기념일엔 그날 간식이 하나 더 생긴다) */
+export type Food = string;
+const ALL_FOODS: readonly string[] = [...FOODS, ...HOLIDAY_FOODS];
 
 export const RPS = { rock: "✊", scissors: "✌️", paper: "✋" } as const;
 export type Rps = keyof typeof RPS;
@@ -58,7 +62,7 @@ export function sanitizeGame(raw: unknown): GameMsg | null {
   const from = str(m.from) ? m.from.slice(0, 20) : "";
   switch (m.t) {
     case "feed":
-      return str(m.by) && str(m.target) && (FOODS as readonly unknown[]).includes(m.food) ? { t: "feed", by: m.by, from, target: m.target, food: m.food as Food } : null;
+      return str(m.by) && str(m.target) && ALL_FOODS.includes(m.food as string) ? { t: "feed", by: m.by, from, target: m.target, food: m.food as Food } : null;
     case "rps":
       return str(m.id) && str(m.by) && str(m.target) && isRps(m.choice) ? { t: "rps", id: m.id, by: m.by, from, target: m.target, choice: m.choice } : null;
     case "rpsAns":

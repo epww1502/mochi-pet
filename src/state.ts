@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { isHat, isSeason, isTag, type HatId, type SeasonId, type TagId } from "./decor";
 import { safePlace, type Place } from "./weather";
+import { cleanBday, cleanTime } from "./events";
 import { CHARACTERS, cleanHatOffset, hatDyMin, type CharacterId, type HatOffset, type Mood, type Motion } from "./sprites";
 
 // 공개해도 되는 키(publishable). 테이블은 RLS로 잠겨 있고 함수로만 접근한다.
@@ -52,6 +53,13 @@ export type Settings = {
   notifyOnline: boolean;
   /** 펫이 사는 모니터 이름. 없거나 빠지면 앱이 뜬 모니터 */
   monitor: string | null;
+  /** 생일 "MM-DD" (없으면 ""). 방 친구에게 월·일만 보인다 */
+  birthday: string;
+  /** 평일 퇴근 시각에 펫들이 만세 (기본 켜짐, 18:00) */
+  offParty: boolean;
+  offTime: string;
+  /** 기념일 인사와 "다 모였다" (기본 켜짐) */
+  eventsOn: boolean;
 };
 
 /** 한 칸이 정수 픽셀이어야 픽셀아트가 또렷하다. 그래서 배율은 20%씩(3px=60% ~ 12px=240%) 움직인다. */
@@ -82,7 +90,7 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, room: null, px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
@@ -106,6 +114,10 @@ function load(): Settings {
       notifyChat: saved.notifyChat === true,
       notifyOnline: saved.notifyOnline === true,
       monitor: typeof saved.monitor === "string" && saved.monitor ? saved.monitor.slice(0, 200) : null,
+      birthday: cleanBday(saved.birthday),
+      offParty: saved.offParty !== false,
+      offTime: cleanTime(saved.offTime),
+      eventsOn: saved.eventsOn !== false,
       hidden:
         saved.hidden && typeof saved.hidden === "object"
           ? Object.fromEntries(Object.entries(saved.hidden as Record<string, unknown>).filter(([, n]) => typeof n === "string")) as Record<string, string>
@@ -162,6 +174,8 @@ export type PeerState = {
   px: number;
   /** 상태 메시지 */
   msg: string;
+  /** 생일 "MM-DD" (없거나 옛 버전이면 "") */
+  bday: string;
 };
 
 /** presence 상태(키별 배열)를 나를 뺀 친구 목록으로. 같은 사람이 여러 번 잡히면 마지막 것을 쓴다. */
@@ -191,6 +205,7 @@ function sanitizePeer(p: PeerState): PeerState {
     tag: isTag(p.tag) ? p.tag : null,
     px: pxOf({ px: p.px }),
     msg: cleanMsg(p.msg),
+    bday: cleanBday(p.bday),
   };
 }
 
@@ -232,6 +247,7 @@ export function buildRoster(peers: PeerState[], members: Member[], selfId: strin
         tag: null,
         px: PX_DEFAULT,
         msg: "",
+        bday: "",
       }),
       online: false,
       lastSeen: Date.parse(m.last_seen) || null,
@@ -360,7 +376,7 @@ export type Reaction = {
   target: string;
   by: string;
   from: string;
-  kind: "dizzy" | "happy" | "emote" | "throw" | "big" | "poke" | "gift" | "open";
+  kind: "dizzy" | "happy" | "emote" | "throw" | "big" | "poke" | "gift" | "open" | "bday";
   emoji?: Emote;
   item?: Throwable;
   hat?: HatId;
@@ -374,7 +390,7 @@ export function sanitizeReaction(raw: unknown): Reaction | null {
   const r = raw as Partial<Reaction> | null;
   if (!r || typeof r.target !== "string" || typeof r.from !== "string" || typeof r.by !== "string") return null;
   const base = { target: r.target, by: r.by, from: r.from.slice(0, 20) };
-  if (r.kind === "dizzy" || r.kind === "happy" || r.kind === "big" || r.kind === "poke") return { ...base, kind: r.kind };
+  if (r.kind === "dizzy" || r.kind === "happy" || r.kind === "big" || r.kind === "poke" || r.kind === "bday") return { ...base, kind: r.kind };
   if (r.kind === "emote" && isEmote(r.emoji)) return { ...base, kind: "emote", emoji: r.emoji };
   if (r.kind === "throw" && isThrowable(r.item)) return { ...base, kind: "throw", item: r.item };
   if ((r.kind === "gift" || r.kind === "open") && isHat(r.hat)) return { ...base, kind: r.kind, hat: r.hat };

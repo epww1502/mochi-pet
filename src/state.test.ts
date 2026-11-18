@@ -16,6 +16,7 @@ const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerSta
   tag: null,
   px: 5,
   msg: "",
+  bday: "",
   ...extra,
 });
 

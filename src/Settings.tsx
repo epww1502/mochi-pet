@@ -6,6 +6,7 @@ import { CHARACTERS, COLORS, cleanHatOffset, hatDyMin, type CharacterId, type Ha
 import { PRESETS, WEATHER_LABEL, searchPlaces, type Place } from "./weather";
 import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
+import { HOLIDAYS } from "./events";
 import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
 import { MSG_MAX, PX_DEFAULT, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, saveSettings, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
@@ -345,6 +346,8 @@ export function Settings() {
 
       <BehaviorSection s={s} />
 
+      <EventSection s={s} />
+
       <section>
         <h2>알림</h2>
         <NotifyToggle
@@ -597,6 +600,77 @@ function BehaviorSection({ s }: { s: PetSettings }) {
           {missing && <span className="muted">고른 모니터가 연결돼 있지 않아서 지금은 앱이 켜진 모니터에 있어요.</span>}
         </label>
       ) : null}
+    </section>
+  );
+}
+
+/** 이벤트: 생일, 퇴근 시간 파티, 기념일·다 모였다 */
+function EventSection({ s }: { s: PetSettings }) {
+  const [mo, da] = s.birthday ? s.birthday.split("-").map(Number) : [0, 0];
+  const setBday = (m: number, d: number) => {
+    if (!m) return saveSettings({ birthday: "" });
+    const max = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+    const day = Math.min(d || 1, max);
+    saveSettings({ birthday: `${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}` });
+  };
+  const holidays = Object.values(HOLIDAYS)
+    .map((h) => h.icon + " " + h.name)
+    .join(", ");
+  return (
+    <section>
+      <h2>이벤트</h2>
+      <label>
+        생일 <span className="muted">· 그날 친구 화면에 🎂와 고깔모자가 보이고, 친구가 축하해 줄 수 있어요. 월·일만 방 친구에게 보여요.</span>
+        <div className="inline">
+          <select aria-label="생일 월" value={mo || ""} onChange={(e) => setBday(Number(e.target.value), da)}>
+            <option value="">월</option>
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i + 1} value={i + 1}>
+                {i + 1}월
+              </option>
+            ))}
+          </select>
+          <select aria-label="생일 일" value={da || ""} disabled={!mo} onChange={(e) => setBday(mo, Number(e.target.value))}>
+            <option value="">일</option>
+            {Array.from({ length: mo ? [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1] : 31 }, (_, i) => (
+              <option key={i + 1} value={i + 1}>
+                {i + 1}일
+              </option>
+            ))}
+          </select>
+          {s.birthday && (
+            <button className="ghost" onClick={() => saveSettings({ birthday: "" })}>
+              지우기
+            </button>
+          )}
+        </div>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={s.offParty} onChange={(e) => saveSettings({ offParty: e.target.checked })} />
+        <span>
+          <b>퇴근 시간 파티</b>
+          <br />
+          <span className="muted">평일 이 시각에 펫들이 다 같이 만세해요. 금요일엔 "불금!"</span>
+        </span>
+      </label>
+      {s.offParty && (
+        <label>
+          퇴근 시각
+          <div className="inline">
+            <input type="time" value={s.offTime} onChange={(e) => /^\d\d:\d\d$/.test(e.target.value) && saveSettings({ offTime: e.target.value })} />
+          </div>
+        </label>
+      )}
+      <label className="check">
+        <input type="checkbox" checked={s.eventsOn} onChange={(e) => saveSettings({ eventsOn: e.target.checked })} />
+        <span>
+          <b>기념일 · 다 모였다</b>
+          <br />
+          <span className="muted">
+            기념일({holidays})에 인사하고 그날 간식이 생겨요. 방 친구(3명 이상)가 모두 접속하면 하루에 한 번 다 같이 만세해요.
+          </span>
+        </span>
+      </label>
     </section>
   );
 }

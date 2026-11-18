@@ -1164,3 +1164,51 @@ html[data-view="settings"] body {
   top: auto;
   bottom: calc(260px * var(--s));
 }
+
+/* 이벤트 꽃가루: 펫들이 있는 바닥 띠 위로 쏟아진다 */
+.confetti {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(340px * var(--s));
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 5;
+}
+.confetti span {
+  position: absolute;
+  top: -12px;
+  width: calc(6px * var(--s));
+  height: calc(10px * var(--s));
+  border-radius: 1px;
+  opacity: 0;
+  animation-name: confetti-fall;
+  animation-timing-function: cubic-bezier(0.25, 0.6, 0.5, 1);
+  animation-fill-mode: forwards;
+}
+@keyframes confetti-fall {
+  0% {
+    transform: translate(0, 0) rotate(0);
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--drift), calc(340px * var(--s))) rotate(var(--spin));
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .confetti {
+    display: none;
+  }
+}
+.toast.event {
+  cursor: pointer;
+  background: #fff8e1;
+  border-color: #ffc93c;
+  color: #4a3a12;
+  font-size: calc(13px * var(--s));
+}

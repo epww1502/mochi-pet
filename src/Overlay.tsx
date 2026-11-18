@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Menu } from "@tauri-apps/api/menu";
 import { PhysicalPosition, PhysicalSize, availableMonitors, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { arrivals, notify, shouldNotifyChat, type Presence } from "./notify";
+import { allHere, holidayOn, isBirthday, isFriday, offTimeHit, onceToday } from "./events";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -121,6 +122,9 @@ export function Overlay() {
   const [dragging, setDragging] = useState(false); // 내 펫을 집어서 끄는 중
   const [lift, setLift] = useState(0); // 내 펫을 바닥에서 들어 올린 높이(px)
   const [falling, setFalling] = useState(false);
+  // 이벤트: 꽃가루와 잠깐 뜨는 인사
+  const [confettiAt, setConfettiAt] = useState(0);
+  const [eventToast, setEventToast] = useState<{ text: string; at: number } | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   channelRef.current = channel;
 
@@ -195,6 +199,7 @@ export function Overlay() {
     tag: s.tag,
     px: s.px,
     msg: s.statusMsg,
+    bday: s.birthday,
   };
   const meRef = useRef(me);
   meRef.current = me;
@@ -239,6 +244,11 @@ export function Overlay() {
       });
       setEmotes((p) => ({ ...p, [r.target]: { emoji: HATS[hat].icon, from: "선물!", at } }));
       setMoods((p) => ({ ...p, [r.target]: { kind: "cheer", at } }));
+    }
+    if (r.kind === "bday") {
+      setEmotes((p) => ({ ...p, [r.target]: { emoji: "🎉", from: `${r.from}: 생일 축하해!`, at } }));
+      setMoods((p) => ({ ...p, [r.target]: { kind: "cheer", at }, [r.by]: { kind: "cheer", at } }));
+      if (r.target === selfId) setConfettiAt(at);
     }
     if (r.kind === "throw" && r.item) {
       const item = r.item;
@@ -485,6 +495,71 @@ export function Overlay() {
     }, 100);
     return () => clearInterval(id);
   }, [dragging]);
+  // ── 이벤트 ──────────────────────────────────────────────
+  /** 화면에 있는 펫(나 + 접속 중인 친구) 모두 만세하고, 머리 위에 글자 */
+  const celebrate = (emoji: string, text: string) => {
+    const at = Date.now();
+    const ids = [selfId, ...walkState.current.roster.filter((p) => p.online).map((p) => p.id)];
+    setMoods((p) => ({ ...p, ...Object.fromEntries(ids.map((id) => [id, { kind: "cheer" as Motion, at }])) }));
+    setEmotes((p) => ({ ...p, ...Object.fromEntries(ids.map((id) => [id, { emoji, from: text, at }])) }));
+    setConfettiAt(at);
+  };
+  const celebrateRef = useRef(celebrate);
+  celebrateRef.current = celebrate;
+  const showEvent = (text: string) => setEventToast({ text, at: Date.now() });
+  const eventRef = useRef({ offParty: s.offParty, offTime: s.offTime, eventsOn: s.eventsOn, birthday: s.birthday, name: me.name });
+  eventRef.current = { offParty: s.offParty, offTime: s.offTime, eventsOn: s.eventsOn, birthday: s.birthday, name: me.name };
+
+  // 30초마다 시계를 보며: 퇴근 시각, 날이 바뀌면 생일·기념일 인사 (하루에 한 번)
+  useEffect(() => {
+    let prev: Date | null = null;
+    const tick = () => {
+      const d = new Date();
+      const e = eventRef.current;
+      if (e.offParty && offTimeHit(prev, d, e.offTime)) {
+        celebrateRef.current(isFriday(d) ? "🎉" : "🏃", isFriday(d) ? "불금! 퇴근!" : "퇴근!");
+        setEventToast({ text: isFriday(d) ? "🎉 금요일 퇴근 시간이에요! 한 주 고생했어요" : "🏃 퇴근 시간이에요! 오늘도 고생했어요", at: Date.now() });
+      }
+      if (isBirthday(e.birthday, d) && onceToday("bday", d)) {
+        celebrateRef.current("🎂", "생일 축하해!");
+        setEventToast({ text: `🎂 생일 축하해요, ${e.name}!`, at: Date.now() });
+      } else {
+        const h = holidayOn(d);
+        if (e.eventsOn && h && onceToday(`holiday`, d)) {
+          celebrateRef.current(h.icon, h.greet);
+          setEventToast({ text: `${h.icon} ${h.name} · ${h.greet}`, at: Date.now() });
+        }
+      }
+      prev = d;
+    };
+    const first = setTimeout(tick, 4000); // 켜자마자는 펫들이 자리 잡은 뒤에
+    const id = setInterval(tick, 30_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, []);
+
+  // 다 모였다: 최근에 쓰는 방 친구가 모두 접속하면 하루에 한 번 (방마다)
+  const hereKey = roster.map((p) => `${p.id}:${p.online ? 1 : 0}`).join(",");
+  useEffect(() => {
+    if (!roomId || !channel || !s.eventsOn) return;
+    const pets = [{ online: true, lastSeen: null }, ...roster.map((p) => ({ online: p.online, lastSeen: p.lastSeen }))];
+    if (allHere(pets, Date.now()) && onceToday(`all-here:${roomId}`, new Date())) {
+      celebrate("🙌", "다 모였다!");
+      showEvent("🙌 방 친구들이 다 모였어요!");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hereKey, channel, roomId, s.eventsOn]);
+
+  // 인사와 꽃가루는 잠깐만
+  useEffect(() => {
+    if (!eventToast) return;
+    const id = setTimeout(() => setEventToast(null), 9000);
+    return () => clearTimeout(id);
+  }, [eventToast]);
+  const holidayFood = s.eventsOn ? holidayOn(new Date(now))?.food : undefined;
+
   const posOf = (id: string, petPx: number) => {
     const k = petPx / PX_DEFAULT;
     const w = walkers.current.get(id);
@@ -1029,7 +1104,7 @@ export function Overlay() {
                   </button>
                 ))}
                 <span className="reply-label">간식</span>
-                {FOODS.map((food) => (
+                {[...(holidayFood && !(FOODS as readonly string[]).includes(holidayFood) ? [holidayFood] : []), ...FOODS].map((food) => (
                   <button
                     key={food}
                     aria-label={`${food} 간식 주기`}
@@ -1041,6 +1116,17 @@ export function Overlay() {
                     {food}
                   </button>
                 ))}
+                {isBirthday(p.bday, new Date(now)) && (
+                  <button
+                    className="wide"
+                    onClick={() => {
+                      react(p.id, "bday");
+                      setPicker(null);
+                    }}
+                  >
+                    🎂 생일 축하하기
+                  </button>
+                )}
                 <button
                   className="wide"
                   onClick={() => {
@@ -1167,6 +1253,12 @@ export function Overlay() {
           )}
         </div>
       )}
+      {Date.now() - confettiAt < CONFETTI_MS && <Confetti key={confettiAt} />}
+      {eventToast && !error && !update && (
+        <div className="toast event" data-hit onClick={() => setEventToast(null)} role="status">
+          {eventToast.text}
+        </div>
+      )}
       <SeasonFx seasons={s.seasons as SeasonId[]} />
       <WeatherFx weather={weather} scale={scale} />
       {shots.map((shot) => (
@@ -1254,12 +1346,16 @@ function PetSlot({
   const light = statusLight(peer, now);
   // 이름표: 상태 불 + 이름 (+ 자리 비움/바쁨/마지막 접속)
   const tag = peer.tag ? TAGS[peer.tag] : null;
+  // 생일이면 이름 앞에 🎂, 모자가 없으면 고깔모자를 씌워 준다
+  const bday = isBirthday(peer.bday, new Date(now));
+  const hat = peer.hat ?? (bday ? "party" : null);
   // 모자가 머리 위로 솟는 경우(머리가 맨 윗줄인 캐릭터·그림)만 이름표를 덜 내린다
-  const hatTall = !!peer.hat && (!!peer.image || CHARACTERS[peer.character].headY + peer.hatOffset[1] < 3);
+  const hatTall = !!hat && (!!peer.image || CHARACTERS[peer.character].headY + peer.hatOffset[1] < 3);
   const label = (
     <div className={`name ${labelPos}`} title={light.text || "온라인"}>
       <span className={`light ${light.color}`} aria-hidden />
       {tag && <span aria-hidden>{tag.icon}</span>}
+      {bday && <span title="오늘 생일">🎂</span>}
       <span style={tag ? { color: tag.color } : undefined}>{peer.name}</span>
       {light.text && <span className="state">{light.text}</span>}
       <span className="sr-only">{light.text || "온라인"}</span>
@@ -1289,7 +1385,7 @@ function PetSlot({
           mood={shown}
           px={peer.px}
           walk={walk}
-          hat={peer.hat}
+          hat={hat}
           hatOffset={peer.hatOffset}
         />
         {gift && (
@@ -1312,6 +1408,34 @@ function PetSlot({
       </div>
       {labelPos === "below" && label}
       {peer.msg && peer.online && labelPos === "below" && <div className="status-msg">{peer.msg}</div>}
+    </div>
+  );
+}
+
+const CONFETTI_MS = 4500;
+const CONFETTI_COLORS = ["#ff8fb1", "#ffc93c", "#4c7dff", "#5dbb63", "#b388ff", "#ff8a3d"];
+/** 펫들 위로 꽃가루가 쏟아진다 (이벤트 때 잠깐) */
+function Confetti() {
+  return (
+    <div className="confetti" aria-hidden>
+      {Array.from({ length: 36 }, (_, i) => {
+        const n = i * 53 + 7; // 번호마다 고정된 값으로 흩는다
+        return (
+          <span
+            key={i}
+            style={
+              {
+                left: `${(n * 17) % 100}%`,
+                background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+                animationDelay: `${(n % 10) * 0.08}s`,
+                animationDuration: `${2.6 + (n % 7) * 0.25}s`,
+                "--drift": `${((n % 9) - 4) * 14}px`,
+                "--spin": `${(n % 2 ? 1 : -1) * (360 + (n % 5) * 90)}deg`,
+              } as React.CSSProperties
+            }
+          />
+        );
+      })}
     </div>
   );
 }
