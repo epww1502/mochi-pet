@@ -17,6 +17,8 @@
     "updater:default",
     "process:allow-restart",
     "autostart:default",
-    "notification:default"
+    "notification:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
   ]
 }

@@ -73,6 +73,8 @@ export type Settings = {
   statusMsg: string;
   /** 펫이 가끔 맨 앞 창 위로 올라가 걷는다 (기본 켜짐) */
   climb: boolean;
+  /** 채팅 단축키(CHAT_HOTKEY)를 쓸지 */
+  chatKey: boolean;
   /** 친구 채팅이 오면 OS 알림 (기본 꺼짐. 바쁨·조용히 모드면 안 울린다) */
   notifyChat: boolean;
   /** 친구가 들어오면 OS 알림 (기본 꺼짐. 바쁨이면 안 울린다) */
@@ -116,7 +118,7 @@ export function pxOf(saved: { px?: unknown; size?: unknown }): number {
 const KEY = "mochi-pet-settings";
 
 function load(): Settings {
-  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, imageFit: { x: 0, y: 0, zoom: 1 }, room: null, rooms: [], px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
+  const base: Settings = { deviceId: crypto.randomUUID(), name: "", character: "mochi", color: "#ffe7c7", image: null, imageFit: { x: 0, y: 0, zoom: 1 }, room: null, rooms: [], px: PX_DEFAULT, busy: false, labelPos: "above", hat: null, hatOffset: [0, 0], hatScale: 1, tag: null, seasons: [], quiet: false, weatherOn: false, place: null, friendPx: {}, hidden: {}, statusMsg: "", climb: true, chatKey: true, notifyChat: false, notifyOnline: false, monitor: null, birthday: "", offParty: true, offTime: "18:00", eventsOn: true };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     return {
@@ -141,6 +143,7 @@ function load(): Settings {
       friendPx: cleanFriendPx(saved.friendPx),
       statusMsg: cleanMsg(saved.statusMsg),
       climb: saved.climb !== false,
+      chatKey: saved.chatKey !== false,
       notifyChat: saved.notifyChat === true,
       notifyOnline: saved.notifyOnline === true,
       monitor: typeof saved.monitor === "string" && saved.monitor ? saved.monitor.slice(0, 200) : null,
@@ -390,6 +393,18 @@ export function sanitizeChat(raw: unknown): { sender_id: string; body: string } 
   return text ? { sender_id, body: text } : null;
 }
 
+/** 채팅 단축키: 다른 앱을 쓰는 중에도 누르면 내 펫 입력창이 열린다. 맥에서는 ⌥⇧M */
+export const CHAT_HOTKEY = "Alt+Shift+M";
+export const chatHotkeyLabel = (mac = /Mac/i.test(navigator.userAgent)) => (mac ? "⌥ ⇧ M" : "Alt + Shift + M");
+
+/** 펫 위 말풍선. 한 사람이 연달아 말하면 아직 떠 있는 말 위에 쌓아서 다 보여 준다 (lines: 오래된 것부터, BUBBLE_MAX줄까지) */
+export const BUBBLE_MAX = 4;
+export type Chat = { sender_id: string; body: string; at: number; lines: string[] };
+export function pushChat(prev: Chat | undefined, c: { sender_id: string; body: string }, now: number, showMs: number): Chat {
+  const still = prev && now - prev.at < showMs ? prev.lines : [];
+  return { sender_id: c.sender_id, body: c.body, at: now, lines: [...still, c.body].slice(-BUBBLE_MAX) };
+}
+
 /** 친구 펫을 눌러 보낼 수 있는 이모티콘 */
 export const EMOTES = ["❤️", "🥰", "🤗", "👍", "🙌", "🎉", "😂", "🤣", "😮", "😢", "👋", "☕"] as const;
 export type Emote = (typeof EMOTES)[number];
@@ -470,9 +485,9 @@ export function sanitizeReaction(raw: unknown): Reaction | null {
   return null;
 }
 
-/** 설정 창 → 펫 창으로 보내는 일 (친구 목록에서 콕 찌르기·간식 주기). 두 창이 같은 localStorage를 본다 */
+/** 설정 창 → 펫 창으로 보내는 일 (친구 목록에서 콕 찌르기·간식 주기, 대화 탭에서 말하기). 두 창이 같은 localStorage를 본다 */
 export const ACTION_KEY = "mochi-pet-action";
-export type PetAction = { kind: "poke" | "feed"; target: string };
+export type PetAction = { kind: "poke" | "feed"; target: string } | { kind: "say"; body: string };
 export function sendPetAction(a: PetAction) {
   try {
     // 같은 일을 두 번 해도 값이 바뀌어야 다른 창에 알림(storage 이벤트)이 간다
@@ -485,10 +500,31 @@ export function readPetAction(v: string | null): PetAction | null {
   try {
     const o = JSON.parse(v ?? "") as Record<string, unknown>;
     if ((o.kind === "poke" || o.kind === "feed") && typeof o.target === "string" && o.target) return { kind: o.kind, target: o.target };
+    if (o.kind === "say" && typeof o.body === "string" && o.body.trim()) return { kind: "say", body: o.body.trim().slice(0, CHAT_MAX) };
   } catch {
     // 이상한 값은 무시
   }
   return null;
+}
+
+/**
+ * 설정 창 대화 탭에 메신저처럼 그릴 한 줄.
+ * 날짜가 바뀌면 날짜 줄(day)을 먼저 그리고, 같은 사람이 이어 말하면 이름은 첫 줄에만, 시각은 같은 분의 마지막 줄에만 보인다.
+ */
+export type ChatRow = { id: number; mine: boolean; name: string; body: string; time: string; day: string | null; showName: boolean; showTime: boolean };
+export function chatRows(msgs: { id: number; sender_id: string; sender_name: string; body: string; created_at: string }[], selfId: string): ChatRow[] {
+  const at = msgs.map((m) => new Date(m.created_at));
+  const dayOf = (d: Date) => d.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
+  const minOf = (d: Date) => d.toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+  return msgs.map((m, i) => {
+    const day = dayOf(at[i]);
+    const time = minOf(at[i]);
+    const newDay = i === 0 || dayOf(at[i - 1]) !== day;
+    const next = msgs[i + 1];
+    const sameNext = !!next && next.sender_id === m.sender_id && dayOf(at[i + 1]) === day && minOf(at[i + 1]) === time;
+    const mine = m.sender_id === selfId;
+    return { id: m.id, mine, name: m.sender_name, body: m.body, time, day: newDay ? day : null, showName: !mine && (newDay || msgs[i - 1].sender_id !== m.sender_id), showTime: !sameNext };
+  });
 }
 
 /** 서버가 알려 주는 방 상태: 이름, 방장, 내가 내보내졌는지 (서버가 모르는 방이거나 모양이 이상하면 null) */

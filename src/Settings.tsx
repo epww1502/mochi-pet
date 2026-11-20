@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { PetCanvas } from "./Pet";
 import { FIT_DEFAULT, FIT_ZOOM_MAX, FIT_ZOOM_MIN, cleanFit, loadImage, trimCanvas, type PictureFit } from "./picture";
 import { HATS, SEASONS, SEASON_IDS, TAGS, available, type HatId, type TagId } from "./decor";
@@ -9,7 +9,7 @@ import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
 import { HOLIDAYS } from "./events";
 import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
-import { MSG_MAX, NOTE_MAX, cleanRoomState, sendPetAction, PX_DEFAULT, ago, buildRoster, type Member, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
+import { MSG_MAX, NOTE_MAX, chatHotkeyLabel, chatRows, cleanRoomState, sanitizeChat, sendPetAction, PX_DEFAULT, ago, buildRoster, type Member, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -28,25 +28,35 @@ export function Settings() {
   const weather = useWeather(s.weatherOn, s.place);
   // 편집: 미리보기에서 펫(크기·그림 위치)과 모자(위치·크기)를 같이 고친다. 무엇을 끌지 처음 고른다.
   const [edit, setEdit] = useState<EditTarget | null>(null);
-  // 최근 대화는 맨 아래(가장 최근)가 보이게. 새 메시지가 오면 다시 아래로.
   const historyRef = useRef<HTMLUListElement>(null);
   const lastId = history[history.length - 1]?.id;
-  useEffect(() => {
-    const el = historyRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lastId]);
+  const [say, setSay] = useState(""); // 대화 탭에서 쓰는 중인 말
 
   const roomId = s.room?.id;
   useEffect(() => {
     if (!roomId) return setHistory([]);
     const load = () =>
-      supabase.rpc("recent_messages", { p_room: roomId, p_limit: 30 }).then(({ data }) => setHistory((data as Message[]) ?? []));
+      supabase.rpc("recent_messages", { p_room: roomId, p_limit: 100 }).then(({ data }) => setHistory((data as Message[]) ?? []));
     load();
     window.addEventListener("focus", load);
     const id = setInterval(load, 10000);
+    // 새 말은 바로 보이게: 방 채널의 채팅을 같이 듣고 임시로 붙여 둔다 (저장된 기록은 조금 뒤 다시 받아 온다)
+    const ch = supabase
+      .channel(`room:${roomId}`)
+      .on("broadcast", { event: "chat" }, ({ payload }) => {
+        const c = sanitizeChat(payload);
+        if (!c) return;
+        setHistory((h) => [
+          ...h,
+          { id: -Date.now(), sender_id: c.sender_id, sender_name: [...h].reverse().find((m) => m.sender_id === c.sender_id)?.sender_name ?? "친구", body: c.body, created_at: new Date().toISOString() },
+        ]);
+        setTimeout(load, 1500);
+      })
+      .subscribe();
     return () => {
       window.removeEventListener("focus", load);
       clearInterval(id);
+      supabase.removeChannel(ch);
     };
   }, [roomId]);
 
@@ -79,6 +89,17 @@ export function Settings() {
     } catch {
       /* 저장 못 해도 지금 탭은 바뀐다 */
     }
+  };
+  // 대화는 맨 아래(가장 최근)가 보이게. 새 말이 오거나 대화 탭을 열면 다시 아래로.
+  useEffect(() => {
+    const el = historyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lastId, tab]);
+  const sendSay = () => {
+    const body = say.trim();
+    if (!body) return;
+    sendPetAction({ kind: "say", body }); // 실제로 보내는 건 방에 연결돼 있는 펫 창이 한다
+    setSay("");
   };
 
   return (
@@ -528,24 +549,49 @@ export function Settings() {
             <p className="hint legend">🟢 온라인 · 🟠 자리 비움 · 🔴 바쁨 · ⚪ 오프라인</p>
           </section>
 
-          {s.room && (
-            <section>
-              <h2>최근 대화</h2>
-              {history.length === 0 ? (
-                <p className="muted">아직 대화가 없어요. 펫을 클릭하면 말할 수 있어요.</p>
-              ) : (
-                <ul className="history" ref={historyRef}>
-                  {history.map((m) => (
-                    <li key={m.id}>
-                      <b>{m.sender_id === s.deviceId ? "나" : m.sender_name}</b> {m.body}
-                      <time>{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</time>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
         </>
+      )}
+
+      {tab === "chat" && (
+        <section>
+          {!s.room ? (
+            <p className="hint">방에 들어가면 대화를 볼 수 있어요 (친구 탭에서 들어가거나 만들어요)</p>
+          ) : (
+            <>
+              <h2>
+                {s.room.name} <span className="muted">· 최근 100개까지</span>
+              </h2>
+              <ul className="chat-list" ref={historyRef} aria-label="대화">
+                {history.length === 0 && <li className="muted">아직 대화가 없어요. 아래에 써서 먼저 말해 보세요.</li>}
+                {chatRows(history, s.deviceId).map((r) => (
+                  <Fragment key={r.id}>
+                    {r.day && <li className="chat-day">{r.day}</li>}
+                    <li className={`chat-row${r.mine ? " mine" : ""}`}>
+                      {r.showName && <span className="chat-name">{r.name}</span>}
+                      <span className="chat-line">
+                        <span className="chat-bubble">{r.body}</span>
+                        {r.showTime && <time>{r.time}</time>}
+                      </span>
+                    </li>
+                  </Fragment>
+                ))}
+              </ul>
+              <div className="inline">
+                <input
+                  aria-label="메시지"
+                  value={say}
+                  maxLength={300}
+                  placeholder="메시지 보내기"
+                  onChange={(e) => setSay(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && sendSay()}
+                />
+                <button disabled={!say.trim()} onClick={sendSay}>
+                  보내기
+                </button>
+              </div>
+            </>
+          )}
+        </section>
       )}
 
       {tab === "app" && (
@@ -557,6 +603,40 @@ export function Settings() {
             <NotifyToggle on={s.notifyOnline} onChange={(v) => saveSettings({ notifyOnline: v })} title="친구 접속 알림" desc="친구가 앱을 켜면 알려 줘요" />
           </section>
           <EventSection s={s} />
+          <section>
+            <h2>단축키</h2>
+            <Toggle
+              title={`채팅 열기 · ${chatHotkeyLabel()}`}
+              desc="다른 앱을 쓰는 중에도 누르면 내 펫 입력창이 열려요"
+              checked={s.chatKey}
+              onChange={(on) => saveSettings({ chatKey: on })}
+            />
+            <details className="more-room">
+              <summary>단축키·조작 모두 보기</summary>
+              <ul className="keys">
+                {(
+                  [
+                    [chatHotkeyLabel(), "채팅 입력창 열기 (어디서나)"],
+                    ["Enter", "보내기"],
+                    ["Esc", "입력창 닫기"],
+                    ["내 펫 클릭", "채팅"],
+                    ["내 펫 더블클릭", "크게 인사"],
+                    ["내 펫 끌기", "옮기기 (흔들면 어지러워해요, 들었다 놓으면 떨어져요)"],
+                    ["친구 펫 클릭", "이모티콘·던지기·크기"],
+                    ["친구 펫 세 번 클릭", "콕 찌르기"],
+                    ["친구 펫 끌기", "옮기기 (내 화면만)"],
+                    ["머리 문지르기", "쓰다듬기"],
+                    ["펫 오른쪽 클릭", "메뉴 (친구 펫이면 그 친구 크기 조절도)"],
+                  ] as const
+                ).map(([key, what]) => (
+                  <li key={key}>
+                    <kbd>{key}</kbd>
+                    <span>{what}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </section>
           <section className="quit">
             <button className="ghost" onClick={() => invoke("quit_app")}>
               펫 종료
@@ -569,11 +649,12 @@ export function Settings() {
   );
 }
 
-type TabId = "pet" | "decor" | "friends" | "app";
+type TabId = "pet" | "decor" | "friends" | "chat" | "app";
 const TABS: [TabId, string, string][] = [
   ["pet", "🐾", "내 펫"],
   ["decor", "🎩", "꾸미기"],
-  ["friends", "💬", "친구"],
+  ["friends", "👥", "친구"],
+  ["chat", "💬", "대화"],
   ["app", "⚙️", "앱 설정"],
 ];
 const TAB_KEY = "mochi-pet-settings-tab";

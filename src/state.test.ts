@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, HAT_DX_MAX, cleanHatScale, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, cleanNotes, cleanRoomState, readPetAction, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, cleanNotes, cleanRoomState, chatRows, pushChat, BUBBLE_MAX, readPetAction, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -303,7 +303,51 @@ describe("설정 창 → 펫 창 일", () => {
     expect(readPetAction(JSON.stringify({ kind: "poke", target: "a", at: 1 }))).toEqual({ kind: "poke", target: "a" });
     expect(readPetAction(JSON.stringify({ kind: "nuke", target: "a" }))).toBeNull();
     expect(readPetAction("{")).toBeNull();
+    expect(readPetAction(JSON.stringify({ kind: "say", body: "  점심 뭐 먹지  ", at: 1 }))).toEqual({ kind: "say", body: "점심 뭐 먹지" });
+    expect(readPetAction(JSON.stringify({ kind: "say", body: "   " }))).toBeNull();
     expect(readPetAction(null)).toBeNull();
+  });
+});
+
+describe("pushChat", () => {
+  const say = (body: string) => ({ sender_id: "a", body });
+  it("연달아 말하면 떠 있는 말풍선 위에 쌓이고, 다 사라진 뒤에 말하면 새로 시작한다", () => {
+    const first = pushChat(undefined, say("안녕"), 1000, 7000);
+    const second = pushChat(first, say("뭐 해?"), 3000, 7000);
+    expect(second.lines).toEqual(["안녕", "뭐 해?"]);
+    expect(second.body).toBe("뭐 해?");
+    expect(pushChat(second, say("자?"), 3000 + 7000, 7000).lines).toEqual(["자?"]);
+  });
+  it("너무 많이 쌓이면 오래된 것부터 뺀다", () => {
+    let c = pushChat(undefined, say("0"), 0, 7000);
+    for (let i = 1; i <= BUBBLE_MAX; i++) c = pushChat(c, say(String(i)), i, 7000);
+    expect(c.lines).toHaveLength(BUBBLE_MAX);
+    expect(c.lines[0]).toBe("1");
+  });
+});
+
+describe("chatRows", () => {
+  const at = (d: number, h: number, m: number, sec = 0) => new Date(2026, 10, d, h, m, sec).toISOString();
+  const msg = (id: number, who: string, created_at: string) => ({ id, sender_id: who, sender_name: who === "me" ? "영주" : "다온", body: "안녕", created_at });
+
+  it("같은 친구가 이어 말하면 이름은 첫 줄에만, 시각은 같은 분의 마지막 줄에만 보인다", () => {
+    const rows = chatRows([msg(1, "b", at(18, 10, 0, 5)), msg(2, "b", at(18, 10, 0, 40)), msg(3, "b", at(18, 10, 1))], "me");
+    expect(rows.map((r) => r.showName)).toEqual([true, false, false]);
+    expect(rows.map((r) => r.showTime)).toEqual([false, true, true]);
+  });
+
+  it("내 말에는 이름이 없고, 내가 끼어든 뒤 친구가 다시 말하면 이름이 다시 보인다", () => {
+    const rows = chatRows([msg(1, "b", at(18, 10, 0)), msg(2, "me", at(18, 10, 0)), msg(3, "b", at(18, 10, 0))], "me");
+    expect(rows.map((r) => r.mine)).toEqual([false, true, false]);
+    expect(rows.map((r) => r.showName)).toEqual([true, false, true]);
+    expect(rows.map((r) => r.showTime)).toEqual([true, true, true]);
+  });
+
+  it("날짜가 바뀌면 날짜 줄이 생기고 이름도 다시 보인다", () => {
+    const rows = chatRows([msg(1, "b", at(18, 23, 59)), msg(2, "b", at(19, 0, 0))], "me");
+    expect(rows.map((r) => !!r.day)).toEqual([true, true]);
+    expect(rows[1].showName).toBe(true);
+    expect(chatRows([], "me")).toEqual([]);
   });
 });
 

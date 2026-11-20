@@ -171,6 +171,8 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         // 친구 접속·채팅 알림 (설정에서 켠다)
         .plugin(tauri_plugin_notification::init())
+        // 채팅 단축키 (설정에서 끈다). 등록·해제는 화면(React) 쪽에서 한다
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(HitRects::default())
         .invoke_handler(tauri::generate_handler![set_hit_rects, idle_seconds, open_settings, quit_app, front_window])
         .setup(|app| {

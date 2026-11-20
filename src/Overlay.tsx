@@ -12,6 +12,7 @@ import { HATS, HAT_IDS, TAGS, type HatId, type OrnamentId, type SeasonId } from 
 import { FOODS, LUNCH, RPS, VOTE_GRACE_MS, VOTE_MS, rpsWinner, seededRand, sanitizeGame, spin, tally, type Food, type GameMsg, type Rps } from "./games";
 import { pickPlay, weekdayMood, type WeekdayMood } from "./fun";
 import { wiggleDetector } from "./gestures";
+import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { Bubble, PetCanvas } from "./Pet";
 import { newWalker, perchFrom, stepRoam, type Perch, type Walker } from "./roam";
 import { CANVAS_H, CHARACTERS } from "./sprites";
@@ -42,6 +43,10 @@ import {
   readPetAction,
   cleanNotes,
   cleanRoomState,
+  pushChat,
+  CHAT_HOTKEY,
+  chatHotkeyLabel,
+  type Chat,
   type Note,
   type Emote,
   type Member,
@@ -74,7 +79,6 @@ const GIFT_KEEP_MS = 3 * 60_000;
 /** 새 버전 확인 간격 */
 const UPDATE_CHECK_MS = 60 * 60_000; // 1시간마다
 
-type Chat = { sender_id: string; body: string; at: number };
 type MoodFx = { kind: Motion; at: number };
 type EmoteFx = { emoji: string; from: string; at: number };
 /** 날아가는 물건 하나: 화면 좌표 a → b */
@@ -424,7 +428,7 @@ export function Overlay() {
         // 조용히 모드: 친구 말풍선은 띄우지 않고 개수만 센다 (내용은 설정 창 최근 대화에 남아 있다)
         appendLogRef.current(c); // 열어 둔 최근 대화엔 조용히 모드여도 쌓는다
         if (quietRef.current && c.sender_id !== s.deviceId) return setUnread((n) => n + 1);
-        setChats((prev) => ({ ...prev, [c.sender_id]: { ...c, at: Date.now() } }));
+        setChats((prev) => ({ ...prev, [c.sender_id]: pushChat(prev[c.sender_id], c, Date.now(), CHAT_SHOW_MS) }));
       })
       .on("broadcast", { event: "tree" }, () => loadTreeRef.current())
       .on("broadcast", { event: "game" }, ({ payload }) => {
@@ -682,7 +686,9 @@ export function Overlay() {
   // 설정 창 친구 목록에서 누른 콕 찌르기·간식 주기
   const actionRef = useRef((_a: ReturnType<typeof readPetAction>) => {});
   actionRef.current = (a) => {
-    if (!a || hiddenRef.current[a.target]) return;
+    if (!a) return;
+    if (a.kind === "say") return say(a.body); // 설정 창 대화 탭에서 보낸 말
+    if (hiddenRef.current[a.target]) return;
     if (a.kind === "poke") react(a.target, "poke");
     if (a.kind === "feed") sendGame({ t: "feed", by: selfId, from: me.name, target: a.target, food: FOODS[Math.floor(Math.random() * FOODS.length)] });
   };
@@ -834,11 +840,15 @@ export function Overlay() {
       setError("설정에서 방을 만들거나 초대 코드로 들어가 주세요");
       return;
     }
-    // 친구에게 먼저 바로 보내고(말풍선이 바로 뜬다), 대화 기록 저장은 뒤에서 따로
     setDraft(null);
+    say(body);
+  }
+  // 친구에게 먼저 바로 보내고(말풍선이 바로 뜬다), 대화 기록 저장은 뒤에서 따로
+  function say(body: string) {
+    if (!s.room) return;
     broadcast("chat", { sender_id: s.deviceId, body }, () => {
       // 실시간으로 못 보냈어도 내 말풍선은 보이고, 대화 기록(아래)에는 남아 친구가 최근 대화에서 본다
-      setChats((p) => ({ ...p, [s.deviceId]: { sender_id: s.deviceId, body, at: Date.now() } }));
+      setChats((p) => ({ ...p, [s.deviceId]: pushChat(p[s.deviceId], { sender_id: s.deviceId, body }, Date.now(), CHAT_SHOW_MS) }));
       if (channelRef.current) setError("실시간 연결이 끊겨 다시 연결하는 중이에요. 메시지는 대화 기록에 남겼어요");
     });
     supabase
@@ -852,6 +862,17 @@ export function Overlay() {
     setDraft("");
     await getCurrentWindow().setFocus(); // 클릭 통과 창이라 입력하려면 포커스를 가져와야 한다
   }
+
+  // 채팅 단축키: 다른 앱을 쓰는 중에도 누르면 내 펫 입력창이 열린다 (설정에서 끌 수 있다)
+  const openChatRef = useRef(openChat);
+  openChatRef.current = openChat;
+  useEffect(() => {
+    if (!s.chatKey) return;
+    register(CHAT_HOTKEY, (e) => e.state === "Pressed" && void openChatRef.current()).catch(() =>
+      setError(`채팅 단축키(${chatHotkeyLabel()})를 켜지 못했어요. 다른 앱이 쓰고 있을 수 있어요`),
+    );
+    return () => void unregister(CHAT_HOTKEY).catch(() => {});
+  }, [s.chatKey]);
 
   // 내 펫: 클릭하면 채팅, 더블클릭하면 크게 인사, 집어서 끌면 옮기기(좌우로 흔들면 어지러워함)
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -991,10 +1012,27 @@ export function Overlay() {
   }, [falling]);
 
   // 내 펫 오른쪽 클릭: 운영체제 기본 메뉴로 "설정 열기 / 펫 종료"
-  async function showPetMenu() {
+  // friend: 친구 펫에서 열었으면 그 친구 크기 조절(내 화면에서만)을 맨 위에 더한다
+  async function showPetMenu(friend?: RosterPet) {
+    const resize = (id: string, to: number) => saveSettings({ friendPx: { ...s.friendPx, [id]: Math.min(Math.max(to, PX_MIN), PX_MAX) } });
     try {
       const menu = await Menu.new({
         items: [
+          ...(friend
+            ? [
+                { id: "f-big", text: `${friend.name} 크게 (지금 ${percentOf(friend.px)}%)`, enabled: friend.px < PX_MAX, action: () => resize(friend.id, friend.px + 1) },
+                { id: "f-small", text: `${friend.name} 작게`, enabled: friend.px > PX_MIN, action: () => resize(friend.id, friend.px - 1) },
+                {
+                  id: "f-reset",
+                  text: `${friend.name} 크기 원래대로`,
+                  enabled: s.friendPx[friend.id] !== undefined,
+                  action: () => {
+                    const { [friend.id]: _reset, ...rest } = s.friendPx;
+                    saveSettings({ friendPx: rest });
+                  },
+                },
+              ]
+            : []),
           { id: "settings", text: "설정 열기", action: () => invoke("open_settings") },
           { id: "log", text: "최근 대화 보기", action: () => openMiniLog() },
           { id: "eat", text: "간식 먹기", action: () => sendGame({ t: "feed", by: selfId, from: me.name, target: selfId, food: FOODS[Math.floor(Math.random() * FOODS.length)] }) },
@@ -1372,7 +1410,7 @@ export function Overlay() {
             onMouseDown={(e) => onFriendDown(p.id, e)}
             onContextMenu={(e) => {
               e.preventDefault();
-              showPetMenu(); // 친구 펫에서도 내 펫과 같은 메뉴
+              showPetMenu(p); // 친구 펫에서도 내 펫과 같은 메뉴 + 이 친구 크기
             }}
             onMouseMove={p.online ? (e) => onPetHover(p.id, e) : undefined}
           >
@@ -1653,7 +1691,18 @@ function PetSlot({
       data-peer={peer.id}
       style={{ left: x, bottom: 4 + lift, transition: lift ? "none" : undefined, "--s": peer.px / PX_DEFAULT } as React.CSSProperties}
     >
-      {children ?? (text && <Bubble text={text} />)}
+      {children ??
+        (text && (
+          <>
+            {/* 연달아 한 말은 위로 쌓는다 (맨 아래가 가장 최근) */}
+            {chat?.lines.slice(0, -1).map((line, i) => (
+              <div key={i} className="bubble earlier">
+                {line}
+              </div>
+            ))}
+            <Bubble text={text} />
+          </>
+        ))}
       {emote && (
         <div className="emote" key={emote.at} aria-live="polite">
           <span className="emoji">{emote.emoji}</span>
