@@ -7,7 +7,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { HATS, HAT_IDS, TAGS, type HatId, type OrnamentId, type SeasonId } from "./decor";
 import { FOODS, LUNCH, RPS, VOTE_GRACE_MS, VOTE_MS, rpsWinner, seededRand, sanitizeGame, spin, tally, type Food, type GameMsg, type Rps } from "./games";
 import { pickPlay, weekdayMood, type WeekdayMood } from "./fun";
@@ -43,6 +43,7 @@ import {
   readPetAction,
   cleanNotes,
   cleanRoomState,
+  chatRows,
   pushChat,
   CHAT_HOTKEY,
   chatHotkeyLabel,
@@ -132,7 +133,10 @@ export function Overlay() {
   const [catchBall, setCatchBall] = useState<{ id: string; by: string; from: string; rally: number } | null>(null);
   const [vote, setVote] = useState<Vote | null>(null);
   const [spinning, setSpinning] = useState<string | null>(null); // 룰렛이 돌며 보여주는 메뉴
-  const [miniLog, setMiniLog] = useState<Message[] | null>(null); // 최근 대화 (열려 있으면)
+  const [miniLog, setMiniLog] = useState<Message[] | null>(null); // 대화 창 (열려 있으면)
+  const [logPos, setLogPos] = useState<{ x: number; y: number } | null>(null); // 대화 창 위치 (끌어서 옮긴다)
+  const [logDrag, setLogDrag] = useState(false);
+  const [logDraft, setLogDraft] = useState("");
   const [treeOpen, setTreeOpen] = useState(false);
   const [picker, setPicker] = useState<string | null>(null); // 이모티콘을 보낼 친구 id
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
@@ -426,7 +430,7 @@ export function Overlay() {
           notify(`💬 ${namesRef.current.get(c.sender_id) ?? "친구"}`, String(c.body ?? "").slice(0, 100));
         }
         // 조용히 모드: 친구 말풍선은 띄우지 않고 개수만 센다 (내용은 설정 창 최근 대화에 남아 있다)
-        appendLogRef.current(c); // 열어 둔 최근 대화엔 조용히 모드여도 쌓는다
+        appendLogRef.current(c); // 열어 둔 대화 창엔 조용히 모드여도 쌓는다
         if (quietRef.current && c.sender_id !== s.deviceId) return setUnread((n) => n + 1);
         setChats((prev) => ({ ...prev, [c.sender_id]: pushChat(prev[c.sender_id], c, Date.now(), CHAT_SHOW_MS) }));
       })
@@ -619,7 +623,7 @@ export function Overlay() {
   const walkers = useRef(new Map<string, Walker>());
   const [, setWalkTick] = useState(0);
   const walkState = useRef({ me, roster, moods, bigs, gifts, picker, busyMe: false });
-  walkState.current = { me, roster, moods, bigs, gifts, picker, busyMe: draft !== null || !!replyTo || !!got || dragging || falling || lift > 0 || !!catchBall || !!rpsIncoming || !!rpsAsk || !!miniLog };
+  walkState.current = { me, roster, moods, bigs, gifts, picker, busyMe: draft !== null || !!replyTo || !!got || dragging || falling || lift > 0 || !!catchBall || !!rpsIncoming || !!rpsAsk };
   useEffect(() => {
     let last = performance.now();
     const id = setInterval(() => {
@@ -1034,7 +1038,7 @@ export function Overlay() {
               ]
             : []),
           { id: "settings", text: "설정 열기", action: () => invoke("open_settings") },
-          { id: "log", text: "최근 대화 보기", action: () => openMiniLog() },
+          { id: "log", text: "대화 창 열기", action: () => openMiniLog() },
           { id: "eat", text: "간식 먹기", action: () => sendGame({ t: "feed", by: selfId, from: me.name, target: selfId, food: FOODS[Math.floor(Math.random() * FOODS.length)] }) },
           { id: "lunch", text: "점심 메뉴 투표 시작", action: () => startVote() },
           // 숨긴 친구 다시 보기
@@ -1105,13 +1109,13 @@ export function Overlay() {
 
   applyGameRef.current = applyGame;
 
-  // 최근 대화 (미니 기록)
+  // 대화 창에 새 말 쌓기
   const appendLogRef = useRef<(c: { sender_id: string; body: string }) => void>(() => {});
   appendLogRef.current = (c) =>
     setMiniLog((log) =>
       log
         ? [
-            ...log.slice(-11),
+            ...log.slice(-99),
             {
               id: Date.now() + Math.random(), // 같은 밀리초에 두 개가 와도 key가 겹치지 않게
               sender_id: c.sender_id,
@@ -1122,32 +1126,93 @@ export function Overlay() {
           ]
         : log,
     );
-  // 최근 대화를 열면 맨 아래(가장 최근)부터 보이게
-  const miniLogRef = useRef<HTMLDivElement>(null);
+  // 대화 창: 화면에 떠 있는 작은 메신저 창. 제목 줄을 끌어 옮기고, 아래에서 바로 입력한다.
+  // 열거나 새 말이 오면 맨 아래(가장 최근)가 보이게
+  const miniLogRef = useRef<HTMLUListElement>(null);
   useEffect(() => {
     const el = miniLogRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [miniLog]);
   async function openMiniLog() {
     setUnread(0);
-    if (!roomId) return setError("방에 들어가면 최근 대화를 볼 수 있어요");
-    const { data } = await supabase.rpc("recent_messages", { p_room: roomId, p_limit: 12 });
+    if (!roomId) return setError("방에 들어가면 대화를 볼 수 있어요");
+    // 처음 열 때는 내 펫 위쪽에. 한 번 옮긴 뒤에는 그 자리에 다시 연다.
+    if (!logPos) {
+      const x = walkers.current.get(selfId)?.x ?? window.innerWidth;
+      setLogPos({ x: Math.min(Math.max(x - 60, 8), Math.max(8, window.innerWidth - 300)), y: Math.max(8, window.innerHeight - petTall(px) - 350) });
+    }
+    const { data } = await supabase.rpc("recent_messages", { p_room: roomId, p_limit: 50 });
     setMiniLog((data as Message[]) ?? []);
   }
+  const logPress = useRef<{ dx: number; dy: number } | null>(null);
+  const onLogDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const r = e.currentTarget.parentElement!.getBoundingClientRect();
+    logPress.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    setLogDrag(true);
+    // 커서가 창 밖으로 빨리 나가도 놓치지 않게 잠깐 화면 전체가 클릭을 받는다
+    invoke("set_hit_rects", { rects: [[0, 0, window.innerWidth, window.innerHeight]] });
+  };
+  useEffect(() => {
+    if (!logDrag) return;
+    const move = (e: MouseEvent) => {
+      const p = logPress.current;
+      if (!p) return;
+      // 제목 줄은 항상 화면 안에 남게 (다시 잡을 수 있어야 한다)
+      setLogPos({ x: Math.min(Math.max(e.clientX - p.dx, 0), window.innerWidth - 100), y: Math.min(Math.max(e.clientY - p.dy, 0), window.innerHeight - 40) });
+    };
+    const up = () => {
+      logPress.current = null;
+      setLogDrag(false);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, [logDrag]);
   const miniLogPanel = miniLog ? (
-    <div className="mini-log" data-hit role="log" aria-label="최근 대화" ref={miniLogRef}>
-      <div className="mini-log-head">
-        <b>최근 대화</b>
-        <button aria-label="닫기" onClick={() => setMiniLog(null)}>
+    <div className="mini-log" data-hit role="dialog" aria-label="대화" style={logPos ? { left: logPos.x, top: logPos.y } : undefined}>
+      <div className="mini-log-head" onMouseDown={onLogDown} title="끌어서 옮기기">
+        <b>💬 {s.room?.name ?? "대화"}</b>
+        <button aria-label="닫기" onMouseDown={(e) => e.stopPropagation()} onClick={() => setMiniLog(null)}>
           ✕
         </button>
       </div>
-      {miniLog.length === 0 && <div className="muted">아직 대화가 없어요</div>}
-      {miniLog.map((m) => (
-        <div key={m.id} className="mini-log-line">
-          <b>{m.sender_id === selfId ? "나" : m.sender_name}</b> {m.body}
-        </div>
-      ))}
+      <ul className="chat-list" ref={miniLogRef} role="log">
+        {miniLog.length === 0 && <li className="muted">아직 대화가 없어요</li>}
+        {chatRows(miniLog, selfId).map((r) => (
+          <Fragment key={r.id}>
+            {r.day && <li className="chat-day">{r.day}</li>}
+            <li className={`chat-row${r.mine ? " mine" : ""}`}>
+              {r.showName && <span className="chat-name">{r.name}</span>}
+              <span className="chat-line">
+                <span className="chat-bubble">{r.body}</span>
+                {r.showTime && <time>{r.time}</time>}
+              </span>
+            </li>
+          </Fragment>
+        ))}
+      </ul>
+      <input
+        className="mini-log-input"
+        aria-label="메시지"
+        maxLength={300}
+        placeholder="메시지 보내기 (Enter)"
+        value={logDraft}
+        onChange={(e) => setLogDraft(e.target.value)}
+        // 클릭 통과 창이라 입력하려면 포커스를 가져와야 한다
+        onMouseDown={() => void getCurrentWindow().setFocus()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setMiniLog(null);
+          // 한글 조합 중 Enter는 글자 확정이므로 전송하지 않는다
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && logDraft.trim()) {
+            say(logDraft.trim());
+            setLogDraft("");
+          }
+        }}
+      />
     </div>
   ) : undefined;
 
@@ -1265,7 +1330,7 @@ export function Overlay() {
     </div>
   ) : undefined;
 
-  // 내 펫 위에 잠깐 뜨는 것: 입력창 > 놀이 > 답장 추천 > 선물 열어 본 결과 > 최근 대화
+  // 내 펫 위에 잠깐 뜨는 것: 입력창 > 놀이 > 답장 추천 > 선물 열어 본 결과
   const gotChip = got ? (
     <div className="picker replies" data-hit role="dialog" aria-label="받은 선물">
       <span className="reply-label">
@@ -1376,7 +1441,7 @@ export function Overlay() {
                 ))}
               </div>
             ) : (
-              (gamePopup ?? gotChip ?? miniLogPanel)
+              (gamePopup ?? gotChip)
             )
           ) : (
             <input
@@ -1544,7 +1609,8 @@ export function Overlay() {
           <Tree ornaments={ornaments} px={px} open={treeOpen} onToggle={() => setTreeOpen((v) => !v)} onHang={hang} />
         )}
       </div>
-      {(dragging || dragFriend) && <div className="drag-catcher" data-hit aria-hidden />}
+      {miniLogPanel}
+      {(dragging || dragFriend || logDrag) && <div className="drag-catcher" data-hit aria-hidden />}
       {vote && (
         <div className="vote-panel" data-hit role="dialog" aria-label="점심 메뉴 투표">
           {vote.result ? (

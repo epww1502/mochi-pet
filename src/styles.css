@@ -1203,28 +1203,31 @@ html[data-view="settings"] body {
   font-weight: 700;
 }
 
+/* 대화 창: 화면에 떠 있는 작은 메신저 창 (제목 줄을 끌어 옮긴다) */
 .mini-log {
-  width: max(250px, calc(250px * var(--s)));
-  max-height: max(200px, calc(200px * var(--s)));
-  overflow-y: auto;
-  margin-bottom: calc(6px * var(--s));
-  padding: 6px 8px;
+  position: fixed;
+  right: 16px;
+  bottom: 160px;
+  z-index: 5;
+  width: 290px;
+  display: flex;
+  flex-direction: column;
   border: 2px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--paper);
-  font-size: max(11px, calc(12px * var(--s)));
-  align-self: flex-end;
+  box-shadow: 0 4px 14px rgb(43 27 20 / 0.18);
+  overflow: hidden;
+  font-size: 12px;
 }
 
 .mini-log-head {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 4px;
-  /* 스크롤해도 제목과 닫기 버튼은 위에 남는다 */
-  position: sticky;
-  top: -6px;
-  padding-top: 2px;
-  background: var(--paper);
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--soft);
+  cursor: grab;
+  user-select: none;
 }
 
 .mini-log-head button {
@@ -1234,10 +1237,24 @@ html[data-view="settings"] body {
   font: inherit;
 }
 
-.mini-log-line {
-  padding: 2px 0;
-  border-bottom: 1px solid var(--soft);
-  overflow-wrap: anywhere;
+.mini-log .chat-list {
+  height: 240px;
+  min-height: 0;
+  margin: 0;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.mini-log-input {
+  margin: 0 8px 8px;
+  padding: 6px 10px;
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  font: inherit;
+  outline: none;
+}
+.mini-log-input:focus-visible {
+  border-color: var(--accent);
 }
 
 /* 펫 창이 화면 전체라서, 날씨·계절 효과는 바닥 쪽 띠에만 */
