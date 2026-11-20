@@ -213,7 +213,9 @@ fn click_through_loop(app: AppHandle) {
         let (Ok(cursor), Ok(pos), Ok(scale)) = (app.cursor_position(), win.outer_position(), win.scale_factor()) else {
             continue;
         };
-        let (x, y) = ((cursor.x - pos.x as f64) / scale, (cursor.y - pos.y as f64) / scale);
+        // 맥은 커서 좌표가 주 모니터 배율로 곱해져 온다 (아래 window_point 설명)
+        let cursor_scale = if cfg!(target_os = "macos") { app.primary_monitor().ok().flatten().map(|m| m.scale_factor()) } else { None };
+        let (x, y) = window_point((cursor.x, cursor.y), (pos.x as f64, pos.y as f64), scale, cursor_scale);
         let over = app
             .state::<HitRects>()
             .0
@@ -227,8 +229,37 @@ fn click_through_loop(app: AppHandle) {
     }
 }
 
+/// 커서가 창 안 어디에 있는지 (창 기준 논리 px).
+/// 윈도우는 커서와 창 위치가 같은 실제 픽셀이라 빼고 창 배율로 나누면 된다 (cursor_scale = None).
+/// 맥은 화면 좌표가 원래 논리 px인데, 커서는 주 모니터 배율로, 창 위치는 창이 있는 모니터 배율로 곱해져 온다.
+/// 두 배율이 다르면(맥북 화면 + 일반 외장 모니터) 그대로 빼면 어긋나서 펫 클릭이 안 먹는다. 그래서 각자 배율로 되돌린 뒤 뺀다.
+fn window_point(cursor: (f64, f64), pos: (f64, f64), win_scale: f64, cursor_scale: Option<f64>) -> (f64, f64) {
+    match cursor_scale {
+        Some(c) => (cursor.0 / c - pos.0 / win_scale, cursor.1 / c - pos.1 / win_scale),
+        None => ((cursor.0 - pos.0) / win_scale, (cursor.1 - pos.1) / win_scale),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::window_point;
+
+    #[test]
+    fn 맥에서_배율이_다른_외장_모니터의_펫도_클릭_위치가_맞는다() {
+        // 맥북(2배, 주 모니터 1440pt) 오른쪽에 일반 모니터(1배). 펫 창은 외장 모니터(논리 x=1440)에 있고 커서는 그 창의 (100, 50).
+        // 커서: 논리 (1540, 50) x 주 모니터 2배 = (3080, 100). 창 위치: 논리 (1440, 0) x 창 1배 = (1440, 0).
+        assert_eq!(window_point((3080.0, 100.0), (1440.0, 0.0), 1.0, Some(2.0)), (100.0, 50.0));
+        // 반대로 일반 모니터가 주 모니터(1배)고 펫 창이 맥북 화면(2배, 논리 x=1920)에 있을 때
+        assert_eq!(window_point((2020.0, 50.0), (3840.0, 0.0), 2.0, Some(1.0)), (100.0, 50.0));
+        // 배율이 같으면 예전 계산과 같다
+        assert_eq!(window_point((3080.0, 100.0), (2880.0, 0.0), 2.0, Some(2.0)), (100.0, 50.0));
+    }
+
+    #[test]
+    fn 윈도우는_실제_픽셀_차이를_창_배율로_나눈다() {
+        assert_eq!(window_point((2070.0, 75.0), (1920.0, 0.0), 1.5, None), (100.0, 50.0));
+    }
+
     #[test]
     #[ignore = "창이 떠 있어야 해서 손으로 돌린다: cargo test -- --ignored --nocapture"]
     fn 맨_앞_창_위치를_읽는다() {

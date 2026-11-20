@@ -140,6 +140,7 @@ export function Overlay() {
   const [updating, setUpdating] = useState<string | null>(null); // 받는 중 진행 글자
   const [channel, setChannel] = useState<RealtimeChannel | null>(null); // 구독 완료된 방 채널
   const [dragging, setDragging] = useState(false); // 내 펫을 집어서 끄는 중
+  const [dragFriend, setDragFriend] = useState<string | null>(null); // 친구 펫을 집어서 옆으로 끄는 중 (내 화면에서만 옮겨진다)
   const [lift, setLift] = useState(0); // 내 펫을 바닥에서 들어 올린 높이(px)
   const [falling, setFalling] = useState(false);
   // 이벤트: 꽃가루와 잠깐 뜨는 인사
@@ -632,7 +633,7 @@ export function Overlay() {
         if (!w) walkers.current.set(p.id, (w = newWalker(i === 0 ? maxX * 0.85 : ((i * 0.37) % 0.8) * maxX, now)));
         const mine = p.id === st.me.id;
         const canWalk = p.online && p.status === "idle" && !st.moods[p.id] && !st.bigs[p.id] && !st.gifts[p.id] && st.picker !== p.id && !(mine && st.busyMe);
-        if (mine && dragging) continue; // 끄는 중엔 손이 정한다
+        if ((mine && dragging) || p.id === dragFriend) continue; // 끄는 중엔 손이 정한다
         // 창 위 모서리 위로 펫 키(+이름표)만큼 여유가 있어야 올라간다. 크게 해 둔 펫이 화면 위로 잘리지 않게.
         const f = frontRef.current;
         const front = f && window.innerHeight - f.y >= petTall(p.px) ? f : null;
@@ -641,7 +642,7 @@ export function Overlay() {
       setWalkTick((n) => (n + 1) % 1_000_000);
     }, 100);
     return () => clearInterval(id);
-  }, [dragging]);
+  }, [dragging, dragFriend]);
   // 펫끼리 놀기: 가끔 가까이 쉬고 있는 두 펫이 하이파이브하거나 안아 준다 (내 화면에서만)
   useEffect(() => {
     const id = setInterval(() => {
@@ -917,6 +918,46 @@ export function Overlay() {
   }, [dragging]);
   const onTapRef = useRef(onTap);
   onTapRef.current = onTap;
+
+  // 친구 펫: 집어서 옆으로 끌면 내 화면에서만 자리를 옮긴다 (친구 화면은 그대로). 안 끌고 놓으면 클릭.
+  const friendPress = useRef<{ x: number; offset: number; moved: boolean } | null>(null);
+  const onFriendDown = (id: string, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    friendPress.current = { x: e.clientX, offset: e.clientX - (walkers.current.get(id)?.x ?? 0), moved: false };
+    setDragFriend(id);
+    invoke("set_hit_rects", { rects: [[0, 0, window.innerWidth, window.innerHeight]] });
+  };
+  useEffect(() => {
+    const id = dragFriend;
+    if (!id) return;
+    const friend = walkState.current.roster.find((f) => f.id === id);
+    const maxX = Math.max(0, window.innerWidth - SLOT_W * ((friend?.px ?? PX_DEFAULT) / PX_DEFAULT));
+    const move = (e: MouseEvent) => {
+      const p = friendPress.current;
+      if (!p) return;
+      if (!p.moved && Math.abs(e.clientX - p.x) > 4) p.moved = true;
+      if (!p.moved) return;
+      const w = walkers.current.get(id);
+      const x = Math.min(Math.max(e.clientX - p.offset, 0), maxX);
+      // 창 위에 올라가 있던 펫은 바닥으로 내려서 끈다
+      if (w) walkers.current.set(id, { ...w, x, y: 0, perch: null, jump: null, target: x, restUntil: Date.now() + 6000, moving: true, faceLeft: e.movementX < 0 });
+    };
+    const up = () => {
+      const p = friendPress.current;
+      friendPress.current = null;
+      setDragFriend(null);
+      const w = walkers.current.get(id);
+      if (w) walkers.current.set(id, { ...w, moving: false });
+      if (p && !p.moved && friend?.online) onFriendClick(id);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragFriend]);
 
   // 놓으면 중력으로 떨어져 통통 튄다. 높이서 떨어지면 어지러워한다(친구 화면에도).
   useEffect(() => {
@@ -1327,8 +1368,8 @@ export function Overlay() {
             labelPos={s.labelPos}
             {...fx(p.id)}
             {...posOf(p.id, p.px)}
-            title={p.online ? `${p.name} · 클릭: 이모티콘·던지기 · 세 번 클릭: 콕 찌르기 · 머리 문지르기: 쓰다듬기` : `${p.name} · 오프라인`}
-            onClick={p.online ? () => onFriendClick(p.id) : undefined}
+            title={p.online ? `${p.name} · 클릭: 이모티콘·던지기 · 세 번 클릭: 콕 찌르기 · 끌기: 옮기기(내 화면만) · 머리 문지르기: 쓰다듬기` : `${p.name} · 오프라인 · 끌기: 옮기기(내 화면만)`}
+            onMouseDown={(e) => onFriendDown(p.id, e)}
             onMouseMove={p.online ? (e) => onPetHover(p.id, e) : undefined}
           >
             {picker === p.id ? (
@@ -1461,7 +1502,7 @@ export function Overlay() {
           <Tree ornaments={ornaments} px={px} open={treeOpen} onToggle={() => setTreeOpen((v) => !v)} onHang={hang} />
         )}
       </div>
-      {dragging && <div className="drag-catcher" data-hit aria-hidden />}
+      {(dragging || dragFriend) && <div className="drag-catcher" data-hit aria-hidden />}
       {vote && (
         <div className="vote-panel" data-hit role="dialog" aria-label="점심 메뉴 투표">
           {vote.result ? (
