@@ -2351,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "mochi-pet"
-version = "0.2.15"
+version = "0.2.16"
 dependencies = [
  "core-foundation 0.10.1",
  "core-graphics",

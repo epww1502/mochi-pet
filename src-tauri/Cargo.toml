@@ -1,6 +1,6 @@
 [package]
 name = "mochi-pet"
-version = "0.2.15"
+version = "0.2.16"
 description = "친구들과 화면 구석에서 상태를 보고 채팅하는 데스크톱 픽셀 펫"
 edition = "2024"
 
