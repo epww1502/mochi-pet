@@ -1368,8 +1368,12 @@ export function Overlay() {
             labelPos={s.labelPos}
             {...fx(p.id)}
             {...posOf(p.id, p.px)}
-            title={p.online ? `${p.name} · 클릭: 이모티콘·던지기 · 세 번 클릭: 콕 찌르기 · 끌기: 옮기기(내 화면만) · 머리 문지르기: 쓰다듬기` : `${p.name} · 오프라인 · 끌기: 옮기기(내 화면만)`}
+            title={p.online ? `${p.name} · 클릭: 이모티콘·던지기 · 세 번 클릭: 콕 찌르기 · 끌기: 옮기기(내 화면만) · 머리 문지르기: 쓰다듬기 · 오른쪽 클릭: 설정·종료` : `${p.name} · 오프라인 · 끌기: 옮기기(내 화면만)`}
             onMouseDown={(e) => onFriendDown(p.id, e)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              showPetMenu(); // 친구 펫에서도 내 펫과 같은 메뉴
+            }}
             onMouseMove={p.online ? (e) => onPetHover(p.id, e) : undefined}
           >
             {picker === p.id ? (
