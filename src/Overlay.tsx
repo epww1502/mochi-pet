@@ -41,6 +41,7 @@ import {
   ACTION_KEY,
   readPetAction,
   cleanNotes,
+  cleanRoomState,
   type Note,
   type Emote,
   type Member,
@@ -487,13 +488,19 @@ export function Overlay() {
   const loadRef = useRef(loadMembers);
   loadRef.current = loadMembers;
 
-  // 1분마다: 친구가 방 이름을 바꿨으면 따라 바꾸고, 꺼져 있을 때 받은 쪽지를 가져온다 (서버에 아직 없으면 조용히 넘어간다)
+  // 1분마다: 방장이 나를 내보냈으면 방에서 나오고, 친구가 방 이름을 바꿨으면 따라 바꾸고, 꺼져 있을 때 받은 쪽지를 가져온다 (서버에 아직 없으면 조용히 넘어간다)
+  // ponytail: 강퇴는 내보내진 쪽 앱이 1분마다 묻다가 알아챈다(최대 1분 늦음). 바로 내보내려면 방 채널로 알림을 같이 보내면 된다.
   async function roomSync() {
     const room = s.room;
     if (!room) return;
-    const info = await supabase.rpc("room_info", { p_room: room.id });
-    const name = Array.isArray(info.data) ? (info.data[0] as { name?: unknown } | undefined)?.name : undefined;
-    if (typeof name === "string" && name && name !== room.name) {
+    const state = cleanRoomState((await supabase.rpc("room_state", { p_room: room.id, p_device: s.deviceId })).data);
+    if (state?.kicked) {
+      saveSettings({ room: null, rooms: s.rooms.filter((r) => r.id !== room.id) });
+      setError(`'${room.name}' 방에서 내보내졌어요`);
+      return;
+    }
+    const name = state?.name;
+    if (name && name !== room.name) {
       const next = { ...room, name };
       saveSettings({ room: next, rooms: withRoom(s.rooms, next) });
     }

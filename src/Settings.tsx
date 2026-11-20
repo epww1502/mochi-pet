@@ -9,7 +9,7 @@ import { useWeather } from "./WeatherFx";
 import { askNotifyPermission } from "./notify";
 import { HOLIDAYS } from "./events";
 import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
-import { MSG_MAX, NOTE_MAX, sendPetAction, PX_DEFAULT, ago, buildRoster, type Member, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
+import { MSG_MAX, NOTE_MAX, cleanRoomState, sendPetAction, PX_DEFAULT, ago, buildRoster, type Member, PX_MAX, PX_MIN, cleanMsg, importImage, percentOf, safeImage, saveSettings, withRoom, supabase, useSettings, type Room, type Settings as PetSettings } from "./state";
 
 type Message = { id: number; sender_id: string; sender_name: string; body: string; created_at: string };
 
@@ -55,12 +55,22 @@ export function Settings() {
     const { data, error } = await promise;
     const room = (data as Room[] | null)?.[0];
     if (error || !room) return setMsg(failText);
-    saveSettings({ room, rooms: withRoom(s.rooms, room) });
+    saveSettings({ room, rooms: withRoom(s.rooms, room), ...(s.name ? {} : { name: trimmed }) });
     setCode("");
     setRoomName("");
   }
 
   const trimmed = name.trim();
+  // 이름이 아직 없으면 방에 들어가거나 만들 때 같이 정한다 (정하기 전엔 들어가기·만들기가 잠긴다)
+  const nameFirst = !s.name && (
+    <>
+      <div className="label">내 이름 (방에서 친구들에게 보여요)</div>
+      <div className="inline">
+        <input aria-label="닉네임" value={name} maxLength={20} placeholder="이름을 정해야 방에 들어갈 수 있어요" onChange={(e) => setName(e.target.value)} />
+      </div>
+    </>
+  );
+  const canEnter = !!(s.name || trimmed);
   const [tab, setTab] = useState<TabId>(loadTab);
   const pick = (t: TabId) => {
     setTab(t);
@@ -415,17 +425,18 @@ export function Settings() {
               </>
             ) : (
               <>
+                {nameFirst}
                 <div className="label">초대 코드로 들어가기</div>
                 <div className="inline">
                   <input aria-label="초대 코드" value={code} maxLength={6} placeholder="예: 26MMRA" onChange={(e) => setCode(e.target.value.toUpperCase())} />
-                  <button disabled={code.trim().length !== 6} onClick={() => enter(supabase.rpc("join_room", { p_code: code }), "그런 코드의 방이 없어요")}>
+                  <button disabled={!canEnter || code.trim().length !== 6} onClick={() => enter(supabase.rpc("join_room", { p_code: code }), "그런 코드의 방이 없어요")}>
                     들어가기
                   </button>
                 </div>
                 <div className="label">새 방 만들기</div>
                 <div className="inline">
                   <input aria-label="방 이름" value={roomName} maxLength={30} placeholder="방 이름 (비우면 '우리 방')" onChange={(e) => setRoomName(e.target.value)} />
-                  <button onClick={() => enter(supabase.rpc("create_room", { p_name: roomName }), "방을 만들지 못했어요")}>만들기</button>
+                  <button disabled={!canEnter} onClick={() => enter(supabase.rpc("create_room", { p_name: roomName }), "방을 만들지 못했어요")}>만들기</button>
                 </div>
               </>
             )}
@@ -466,17 +477,18 @@ export function Settings() {
             {s.room && (
               <details className="more-room">
                 <summary>다른 방 들어가기 · 새 방 만들기</summary>
+                {nameFirst}
                 <div className="label">초대 코드로 들어가기</div>
                 <div className="inline">
                   <input aria-label="초대 코드" value={code} maxLength={6} placeholder="예: 26MMRA" onChange={(e) => setCode(e.target.value.toUpperCase())} />
-                  <button disabled={code.trim().length !== 6} onClick={() => enter(supabase.rpc("join_room", { p_code: code }), "그런 코드의 방이 없어요")}>
+                  <button disabled={!canEnter || code.trim().length !== 6} onClick={() => enter(supabase.rpc("join_room", { p_code: code }), "그런 코드의 방이 없어요")}>
                     들어가기
                   </button>
                 </div>
                 <div className="label">새 방 만들기</div>
                 <div className="inline">
                   <input aria-label="방 이름" value={roomName} maxLength={30} placeholder="방 이름 (비우면 '우리 방')" onChange={(e) => setRoomName(e.target.value)} />
-                  <button onClick={() => enter(supabase.rpc("create_room", { p_name: roomName }), "방을 만들지 못했어요")}>만들기</button>
+                  <button disabled={!canEnter} onClick={() => enter(supabase.rpc("create_room", { p_name: roomName }), "방을 만들지 못했어요")}>만들기</button>
                 </div>
               </details>
             )}
@@ -793,22 +805,44 @@ function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
   const [open, setOpen] = useState<string | null>(null); // 펼친 친구
   const [note, setNote] = useState("");
   const [sent, setSent] = useState<{ id: string; text: string } | null>(null); // 방금 한 일 알림
+  const [ownerId, setOwnerId] = useState<string | null>(null); // 방장 (강퇴·방장 넘기기는 방장만)
+  const reload = useRef(() => {});
   useEffect(() => {
     let alive = true;
-    const load = () =>
+    const load = () => {
       supabase.rpc("list_members", { p_room: roomId }).then(({ data }) => {
         if (!alive) return;
         setNow(Date.now());
         if (data) setMembers(data as Member[]);
       });
+      supabase.rpc("room_state", { p_room: roomId, p_device: s.deviceId }).then(({ data }) => alive && setOwnerId(cleanRoomState(data)?.ownerId ?? null));
+    };
+    reload.current = load;
     setMembers(null);
+    setOwnerId(null);
     load();
     const id = setInterval(load, 30_000);
     return () => {
       alive = false;
       clearInterval(id);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
+  const mine = ownerId === s.deviceId;
+  async function kick(id: string, name: string) {
+    if (!confirm(`${name}을(를) 방에서 내보낼까요?\n내보내면 이 방에 다시 들어올 수 없어요.`)) return;
+    const { data } = await supabase.rpc("kick_member", { p_room: roomId, p_by: s.deviceId, p_target: id });
+    if (data !== true) return flash(id, "내보내지 못했어요");
+    setOpen(null);
+    reload.current();
+  }
+  async function handOver(id: string, name: string) {
+    if (!confirm(`${name}에게 방장을 넘길까요?`)) return;
+    const { data } = await supabase.rpc("transfer_owner", { p_room: roomId, p_by: s.deviceId, p_to: id });
+    if (data !== true) return flash(id, "방장을 넘기지 못했어요");
+    setOwnerId(id);
+    flash(id, `이제 ${name}이(가) 방장이에요`);
+  }
   const flash = (id: string, text: string) => {
     setSent({ id, text });
     setTimeout(() => setSent((v) => (v?.text === text ? null : v)), 2500);
@@ -827,7 +861,7 @@ function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
   return (
     <section>
       <h2>
-        친구 목록 {members && <span className="muted">· 접속 {on}명 / {friends.length}명</span>}
+        친구 목록 {members && <span className="muted">· 접속 {on}명 / {friends.length}명{mine ? " · 👑 내가 방장" : ""}</span>}
       </h2>
       {!members ? (
         <p className="hint">불러오는 중…</p>
@@ -854,7 +888,10 @@ function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
                   </span>
                   <span className={`light ${f.online ? "green" : "gray"}`} />
                   <span className="friend-name">
-                    <b>{f.name}</b>
+                    <b>
+                      {f.name}
+                      {f.id === ownerId && <span title="방장" aria-label="방장"> 👑</span>}
+                    </b>
                     <span className="muted">{hidden ? "숨김 · " : ""}{f.online ? "접속 중" : f.lastSeen ? ago(now - f.lastSeen) : "오프라인"}</span>
                   </span>
                   <span className="chev" aria-hidden>{isOpen ? "▴" : "▾"}</span>
@@ -920,6 +957,16 @@ function FriendList({ s, roomId }: { s: PetSettings; roomId: string }) {
                         </button>
                       )}
                     </div>
+                    {mine && (
+                      <div className="inline">
+                        <button className="ghost" onClick={() => handOver(f.id, f.name)}>
+                          👑 방장 넘기기
+                        </button>
+                        <button className="ghost" onClick={() => kick(f.id, f.name)}>
+                          내보내기
+                        </button>
+                      </div>
+                    )}
                     {sent?.id === f.id && <p className="hint" role="status">{sent.text}</p>}
                   </div>
                 )}

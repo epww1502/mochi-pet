@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, HAT_DX_MAX, cleanHatScale, fitImage } from "./sprites";
-import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, cleanNotes, readPetAction, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
+import { EMOTES, EMOTE_MOTION, MAX_IMAGE_CHARS, REPLIES, ago, ROOMS_MAX, buildRoster, cleanFriendPx, cleanRooms, withRoom, cleanMsg, presenceToPeers, pxOf, safeImage, samePerson, sanitizeChat, cleanNotes, cleanRoomState, readPetAction, sanitizeReaction, statusLight, type Member, type PeerState } from "./state";
 
 const peer = (id: string, name: string, extra: Partial<PeerState> = {}): PeerState => ({
   id,
@@ -304,6 +304,16 @@ describe("설정 창 → 펫 창 일", () => {
     expect(readPetAction(JSON.stringify({ kind: "nuke", target: "a" }))).toBeNull();
     expect(readPetAction("{")).toBeNull();
     expect(readPetAction(null)).toBeNull();
+  });
+});
+
+describe("cleanRoomState", () => {
+  it("방장과 내보내졌는지를 읽고, 서버 답이 이상하면 내보내진 것으로 치지 않는다", () => {
+    expect(cleanRoomState([{ name: "우리 방", owner_id: "a", kicked: false }])).toEqual({ name: "우리 방", ownerId: "a", kicked: false });
+    expect(cleanRoomState([{ name: "우리 방", owner_id: null, kicked: true }])).toEqual({ name: "우리 방", ownerId: null, kicked: true });
+    expect(cleanRoomState([{ name: "우리 방", owner_id: "a", kicked: "true" }])?.kicked).toBe(false);
+    expect(cleanRoomState([])).toBeNull();
+    expect(cleanRoomState(null)).toBeNull();
   });
 });
 

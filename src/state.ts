@@ -491,6 +491,14 @@ export function readPetAction(v: string | null): PetAction | null {
   return null;
 }
 
+/** 서버가 알려 주는 방 상태: 이름, 방장, 내가 내보내졌는지 (서버가 모르는 방이거나 모양이 이상하면 null) */
+export type RoomState = { name: string; ownerId: string | null; kicked: boolean };
+export function cleanRoomState(data: unknown): RoomState | null {
+  const r = Array.isArray(data) ? data[0] : null;
+  if (!r || typeof r.name !== "string" || !r.name) return null;
+  return { name: r.name, ownerId: typeof r.owner_id === "string" ? r.owner_id : null, kicked: r.kicked === true };
+}
+
 /** 꺼진 친구에게 남기는 쪽지 */
 export const NOTE_MAX = 200;
 export type Note = { from: string; fromName: string; body: string; at: number };
